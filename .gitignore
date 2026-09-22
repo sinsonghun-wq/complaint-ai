@@ -1,0 +1,8 @@
+node_modules/
+.env
+postgres_data/
+tmp/
+output/
+민원 원본데이터/
+민원 원문 사진/
+build_complaint_pdf.py
