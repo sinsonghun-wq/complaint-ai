@@ -534,7 +534,7 @@ export default function App() {
           </>
         )}
         {view === "admin" && (
-          <section className="two">
+          <section className="department-workspace">
             <article className="panel">
               <h2>부서 민원 처리</h2>
               {department[0] && (
