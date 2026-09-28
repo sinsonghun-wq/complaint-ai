@@ -62,6 +62,15 @@ class ResponseBody(BaseModel):
     content: str
 
 
+class UpdateComplaintBody(BaseModel):
+    title: str = ""
+    content: str = ""
+
+
+class TransferBody(BaseModel):
+    category: str
+
+
 def owner_id(actor: dict[str, Any]) -> str | None:
     return None if actor["role"] == "admin" else actor["owner_id"]
 
@@ -75,6 +84,16 @@ def require_department(actor: dict[str, Any]) -> list[str]:
     if not categories:
         raise HTTPException(403, "부서가 지정된 관리자만 사용할 수 있습니다.")
     return categories
+
+
+def require_user(actor: dict[str, Any]) -> None:
+    if actor["role"] != "user":
+        raise HTTPException(403, "일반 사용자 민원 작성 기능입니다.")
+
+
+def require_admin(actor: dict[str, Any]) -> None:
+    if actor["role"] != "admin":
+        raise HTTPException(403, "부서 관리자 전용 기능입니다.")
 
 
 def check_password(actor: dict[str, Any], password: str) -> None:
@@ -176,6 +195,7 @@ def verify(body: PasswordBody, actor: Annotated[dict, Depends(actor_from_auth)])
 
 @app.post("/api/analyze")
 async def analyze_endpoint(body: ComplaintBody, actor: Annotated[dict, Depends(actor_from_auth)]):
+    require_user(actor)
     record = await analyze(body.title, body.content)
     similar = []
     vector = await embedding(record)
@@ -187,6 +207,8 @@ async def analyze_endpoint(body: ComplaintBody, actor: Annotated[dict, Depends(a
 @app.post("/api/complaints/batch", status_code=201)
 async def batch(body: BatchBody, actor: Annotated[dict, Depends(actor_from_auth)]):
     if not body.complaints: raise HTTPException(400, "저장할 민원이 없습니다.")
+    if actor["role"] == "user" and (len(body.complaints) != 1 or body.complaints[0].get("source_file")):
+        raise HTTPException(403, "일반 사용자는 새 민원을 한 건씩 작성할 수 있습니다.")
     saved, duplicates = await save_records(body.complaints[:MAX_BATCH_SIZE], actor)
     return {"saved": saved, "duplicates": duplicates}
 
@@ -195,7 +217,7 @@ async def batch(body: BatchBody, actor: Annotated[dict, Depends(actor_from_auth)
 def counts(actor: Annotated[dict, Depends(actor_from_auth)]):
     if actor["role"] == "admin":
         categories, args = allowed(actor), (allowed(actor),)
-        clause = "owner_user_id IS NULL AND category = ANY(%s)"
+        clause = "category = ANY(%s)"
     else:
         args, clause = (actor["owner_id"],), "owner_user_id=%s"
     rows = fetch_all(f"SELECT COALESCE(category,'기타') category,COUNT(*)::int count FROM complaints WHERE deleted_at IS NULL AND {clause} GROUP BY category", args)
@@ -206,19 +228,44 @@ def counts(actor: Annotated[dict, Depends(actor_from_auth)]):
 @app.get("/api/complaints")
 def complaints(deleted: bool = False, category: str | None = None, limit: int = 100, offset: int = 0, actor: dict = Depends(actor_from_auth)):
     limit = max(1, min(limit, 100)); offset = max(offset, 0)
-    if actor["role"] == "admin": clause, scope = "owner_user_id IS NULL AND category=ANY(%s)", [allowed(actor)]
+    if actor["role"] == "admin": clause, scope = "category=ANY(%s)", [allowed(actor)]
     else: clause, scope = "owner_user_id=%s", [actor["owner_id"]]
     where = "deleted_at IS NOT NULL" if deleted else "deleted_at IS NULL"
     params: list[Any] = [*scope, category, category, limit, offset]
-    sql = f"SELECT id,title,content,summary,category,complaint_status,source_file,source_row,processing_mode,llm_model,embedding_model,created_at,deleted_at FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s) ORDER BY {'deleted_at' if deleted else 'created_at'} DESC LIMIT %s OFFSET %s"
+    sql = f"""SELECT id,title,content,summary,category,complaint_status,source_file,source_row,processing_mode,llm_model,embedding_model,created_at,deleted_at,
+        (owner_user_id IS NOT NULL) AS submitted_by_user,
+        COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response
+        FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s)
+        ORDER BY {'deleted_at' if deleted else 'created_at'} DESC LIMIT %s OFFSET %s"""
     rows = fetch_all(sql, params)
     total = fetch_one(f"SELECT COUNT(*)::int count FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s)", [*scope, category, category])
     return {"complaints": rows, "total": total["count"]}
 
 
 def scoped_where(actor: dict, parameter: int = 2) -> tuple[str, list[Any]]:
-    if actor["role"] == "admin": return f" AND owner_user_id IS NULL AND category=ANY(%s)", [allowed(actor)]
+    if actor["role"] == "admin": return " AND category=ANY(%s)", [allowed(actor)]
     return " AND owner_user_id=%s", [actor["owner_id"]]
+
+
+@app.patch("/api/complaints/{complaint_id}")
+async def update_own_complaint(complaint_id: int, body: UpdateComplaintBody, actor: Annotated[dict, Depends(actor_from_auth)]):
+    require_user(actor)
+    title, content = body.title.strip(), body.content.strip()
+    if not content:
+        raise HTTPException(400, "민원 내용을 입력해 주세요.")
+    record = await analyze(title, content)
+    metadata = json.dumps({key: record.get(key) for key in ["key_points", "urgency", "needs_review", "review_reason", "reason", "keywords"]}, ensure_ascii=False)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""UPDATE complaints SET title=%s,content=%s,summary=%s,category=%s,content_fingerprint=%s,
+                processing_mode=%s,llm_model=%s,prompt_version=%s,analysis_metadata=%s::jsonb,complaint_status='접수',status_updated_at=NOW()
+                WHERE id=%s AND owner_user_id=%s AND deleted_at IS NULL RETURNING id,title,summary,category,complaint_status""",
+                (record["title"], record["content"], record["summary"], record["category"], fingerprint(record["content"]), record.get("processing_mode", "fallback"), record.get("model"), record.get("prompt_version"), metadata, complaint_id, actor["owner_id"]))
+            result = cur.fetchone()
+        conn.commit()
+    if not result:
+        raise HTTPException(404, "수정할 본인 민원을 찾지 못했습니다.")
+    return {"complaint": result}
 
 
 @app.delete("/api/complaints/{complaint_id}")
@@ -353,6 +400,7 @@ def process_csv_job(job_id: str, path: Path, source_file: str, stored_owner: str
 
 @app.post("/api/imports", status_code=202)
 async def create_import(background: BackgroundTasks, file: UploadFile = File(...), actor: dict = Depends(actor_from_auth)):
+    require_admin(actor)
     path, suffix = await save_upload(file, CSV_MAX_UPLOAD_BYTES)
     if suffix != ".csv": path.unlink(missing_ok=True); raise HTTPException(400, "일괄 처리는 CSV 파일만 지원합니다.")
     encoding = csv_encoding(path)
@@ -383,6 +431,7 @@ def import_failures(job_id: str, actor: Annotated[dict, Depends(actor_from_auth)
 
 @app.post("/api/intake")
 async def intake(file: UploadFile = File(...), actor: dict = Depends(actor_from_auth)):
+    require_admin(actor)
     path, suffix = await save_upload(file, DOCUMENT_MAX_UPLOAD_BYTES)
     try:
         records: list[dict[str, Any]] = []
@@ -421,7 +470,9 @@ def department_complaint(complaint_id: int, actor: dict) -> dict:
 @app.get("/api/department/complaints")
 def department_complaints(status: str = "", actor: dict = Depends(actor_from_auth)):
     categories = require_department(actor)
-    rows = fetch_all("SELECT id,title,content,summary,category,complaint_status,status_updated_at,created_at,(owner_user_id IS NOT NULL) submitted_by_user FROM complaints WHERE deleted_at IS NULL AND category=ANY(%s) AND (%s='' OR complaint_status=%s) ORDER BY created_at DESC LIMIT 200", (categories, status, status))
+    rows = fetch_all("""SELECT id,title,content,summary,category,complaint_status,status_updated_at,created_at,(owner_user_id IS NOT NULL) submitted_by_user,
+        COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response
+        FROM complaints WHERE deleted_at IS NULL AND category=ANY(%s) AND (%s='' OR complaint_status=%s) ORDER BY created_at DESC LIMIT 200""", (categories, status, status))
     return {"complaints": rows}
 
 
@@ -447,9 +498,34 @@ def create_response(complaint_id: int, body: ResponseBody, actor: Annotated[dict
     content = body.content.strip()
     if not 2 <= len(content) <= 5000: raise HTTPException(400, "응답은 2~5,000자로 작성해 주세요.")
     with connection() as conn:
-        with conn.cursor() as cur: cur.execute("INSERT INTO complaint_responses(id,complaint_id,author_user_id,department,content) VALUES(%s,%s,%s,%s,%s) RETURNING id,content,created_at", (uuid4(), complaint_id, actor["sub"], actor.get("department"), content)); result = cur.fetchone()
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO complaint_responses(id,complaint_id,author_user_id,department,content) VALUES(%s,%s,%s,%s,%s) RETURNING id,content,created_at", (uuid4(), complaint_id, actor["sub"], actor.get("department"), content)); result = cur.fetchone()
+            cur.execute("UPDATE complaints SET complaint_status='완료',status_updated_at=NOW() WHERE id=%s", (complaint_id,))
         conn.commit()
     return {"response": result}
+
+
+@app.post("/api/department/complaints/{complaint_id}/transfer")
+def transfer_complaint(complaint_id: int, body: TransferBody, actor: Annotated[dict, Depends(actor_from_auth)]):
+    require_department(actor)
+    if body.category not in CATEGORIES:
+        raise HTTPException(400, "전달할 부서를 선택해 주세요.")
+    department_complaint(complaint_id, actor)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE complaints SET category=%s,complaint_status='접수',status_updated_at=NOW() WHERE id=%s RETURNING id,category,complaint_status", (body.category, complaint_id))
+            result = cur.fetchone()
+        conn.commit()
+    return {"complaint": result}
+
+
+@app.get("/api/my/complaints/{complaint_id}/responses")
+def my_responses(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)]):
+    require_user(actor)
+    exists = fetch_one("SELECT id FROM complaints WHERE id=%s AND owner_user_id=%s", (complaint_id, actor["owner_id"]))
+    if not exists:
+        raise HTTPException(404, "본인 민원을 찾지 못했습니다.")
+    return {"responses": fetch_all("SELECT r.id,r.content,r.created_at,u.display_name author_name FROM complaint_responses r JOIN app_users u ON u.id=r.author_user_id WHERE r.complaint_id=%s ORDER BY r.created_at", (complaint_id,))}
 
 
 @app.get("/{path:path}")
