@@ -145,10 +145,14 @@ async def save_records(records: list[dict[str, Any]], actor: dict[str, Any], sou
 
 @app.on_event("startup")
 def startup() -> None:
-    # Existing Node implementation owns the full schema migration. This only validates the shared DB.
+    # 이전 설치 DB도 답변 임시 저장 상태를 바로 사용할 수 있도록 호환 컬럼을 보완한다.
     with connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
+            cur.execute("ALTER TABLE complaint_responses ADD COLUMN IF NOT EXISTS response_state TEXT NOT NULL DEFAULT 'sent'")
+            cur.execute("ALTER TABLE complaint_responses ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ")
+            cur.execute("UPDATE complaint_responses SET sent_at=created_at WHERE response_state='sent' AND sent_at IS NULL")
+        conn.commit()
 
 
 @app.get("/health")
@@ -232,9 +236,11 @@ def complaints(deleted: bool = False, category: str | None = None, limit: int = 
     else: clause, scope = "owner_user_id=%s", [actor["owner_id"]]
     where = "deleted_at IS NOT NULL" if deleted else "deleted_at IS NULL"
     params: list[Any] = [*scope, category, category, limit, offset]
+    response_filter = "" if actor["role"] == "admin" else " AND r.response_state='sent'"
     sql = f"""SELECT id,title,content,summary,category,complaint_status,source_file,source_row,processing_mode,llm_model,embedding_model,created_at,deleted_at,
         (owner_user_id IS NOT NULL) AS submitted_by_user,
-        COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response
+        COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response,
+        COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response_state
         FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s)
         ORDER BY {'deleted_at' if deleted else 'created_at'} DESC LIMIT %s OFFSET %s"""
     rows = fetch_all(sql, params)
@@ -471,7 +477,8 @@ def department_complaint(complaint_id: int, actor: dict) -> dict:
 def department_complaints(status: str = "", actor: dict = Depends(actor_from_auth)):
     categories = require_department(actor)
     rows = fetch_all("""SELECT id,title,content,summary,category,complaint_status,status_updated_at,created_at,(owner_user_id IS NOT NULL) submitted_by_user,
-        COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response
+        COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response,
+        COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response_state
         FROM complaints WHERE deleted_at IS NULL AND category=ANY(%s) AND (%s='' OR complaint_status=%s) ORDER BY created_at DESC LIMIT 200""", (categories, status, status))
     return {"complaints": rows}
 
@@ -489,7 +496,7 @@ def department_status(complaint_id: int, body: StatusBody, actor: Annotated[dict
 @app.get("/api/department/complaints/{complaint_id}/responses")
 def responses(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)]):
     department_complaint(complaint_id, actor)
-    return {"responses": fetch_all("SELECT r.id,r.content,r.created_at,u.display_name author_name FROM complaint_responses r JOIN app_users u ON u.id=r.author_user_id WHERE r.complaint_id=%s ORDER BY r.created_at", (complaint_id,))}
+    return {"responses": fetch_all("SELECT r.id,r.content,r.response_state,r.created_at,r.sent_at,u.display_name author_name FROM complaint_responses r JOIN app_users u ON u.id=r.author_user_id WHERE r.complaint_id=%s ORDER BY r.created_at", (complaint_id,))}
 
 
 @app.post("/api/department/complaints/{complaint_id}/responses", status_code=201)
@@ -499,10 +506,41 @@ def create_response(complaint_id: int, body: ResponseBody, actor: Annotated[dict
     if not 2 <= len(content) <= 5000: raise HTTPException(400, "응답은 2~5,000자로 작성해 주세요.")
     with connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO complaint_responses(id,complaint_id,author_user_id,department,content) VALUES(%s,%s,%s,%s,%s) RETURNING id,content,created_at", (uuid4(), complaint_id, actor["sub"], actor.get("department"), content)); result = cur.fetchone()
+            # 같은 관리자가 남긴 이전 임시 답변은 교체해 한 민원에 하나의 최신 초안만 유지한다.
+            cur.execute("DELETE FROM complaint_responses WHERE complaint_id=%s AND author_user_id=%s AND response_state='draft'", (complaint_id, actor["sub"]))
+            cur.execute("INSERT INTO complaint_responses(id,complaint_id,author_user_id,department,content,response_state) VALUES(%s,%s,%s,%s,%s,'draft') RETURNING id,content,response_state,created_at", (uuid4(), complaint_id, actor["sub"], actor.get("department"), content)); result = cur.fetchone()
+            cur.execute("UPDATE complaints SET complaint_status='진행중',status_updated_at=NOW() WHERE id=%s", (complaint_id,))
+        conn.commit()
+    return {"response": result, "complaint_status": "진행중"}
+
+
+@app.delete("/api/department/complaints/{complaint_id}/responses/draft")
+def delete_draft_response(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)]):
+    department_complaint(complaint_id, actor)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM complaint_responses WHERE complaint_id=%s AND author_user_id=%s AND response_state='draft' RETURNING id", (complaint_id, actor["sub"]))
+            deleted = len(cur.fetchall())
+            if deleted:
+                cur.execute("UPDATE complaints SET complaint_status='접수',status_updated_at=NOW() WHERE id=%s", (complaint_id,))
+        conn.commit()
+    return {"deleted": deleted, "complaint_status": "접수" if deleted else None}
+
+
+@app.post("/api/department/complaints/{complaint_id}/responses/send")
+def send_draft_response(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)]):
+    department_complaint(complaint_id, actor)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""UPDATE complaint_responses SET response_state='sent',sent_at=NOW()
+                WHERE id=(SELECT id FROM complaint_responses WHERE complaint_id=%s AND author_user_id=%s AND response_state='draft' ORDER BY created_at DESC LIMIT 1)
+                RETURNING id,content,response_state,sent_at""", (complaint_id, actor["sub"]))
+            response = cur.fetchone()
+            if not response:
+                raise HTTPException(400, "전송할 임시 저장 답변이 없습니다.")
             cur.execute("UPDATE complaints SET complaint_status='완료',status_updated_at=NOW() WHERE id=%s", (complaint_id,))
         conn.commit()
-    return {"response": result}
+    return {"response": response, "complaint_status": "완료"}
 
 
 @app.post("/api/department/complaints/{complaint_id}/transfer")
@@ -525,7 +563,7 @@ def my_responses(complaint_id: int, actor: Annotated[dict, Depends(actor_from_au
     exists = fetch_one("SELECT id FROM complaints WHERE id=%s AND owner_user_id=%s", (complaint_id, actor["owner_id"]))
     if not exists:
         raise HTTPException(404, "본인 민원을 찾지 못했습니다.")
-    return {"responses": fetch_all("SELECT r.id,r.content,r.created_at,u.display_name author_name FROM complaint_responses r JOIN app_users u ON u.id=r.author_user_id WHERE r.complaint_id=%s ORDER BY r.created_at", (complaint_id,))}
+    return {"responses": fetch_all("SELECT r.id,r.content,r.created_at,r.sent_at,u.display_name author_name FROM complaint_responses r JOIN app_users u ON u.id=r.author_user_id WHERE r.complaint_id=%s AND r.response_state='sent' ORDER BY r.created_at", (complaint_id,))}
 
 
 @app.get("/{path:path}")

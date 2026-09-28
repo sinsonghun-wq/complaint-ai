@@ -83,7 +83,9 @@ CREATE TABLE IF NOT EXISTS complaint_responses (
   author_user_id UUID NOT NULL REFERENCES app_users(id),
   department TEXT NOT NULL,
   content TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  response_state TEXT NOT NULL DEFAULT 'sent' CHECK (response_state IN ('draft', 'sent')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  sent_at TIMESTAMPTZ
 );
 
 -- 이전의 최소 complaints 스키마를 최신 FastAPI 스키마로 보완한다.
@@ -100,6 +102,8 @@ ALTER TABLE complaints ADD COLUMN IF NOT EXISTS owner_user_id UUID;
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS complaint_status TEXT NOT NULL DEFAULT '접수';
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS status_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE complaint_responses ADD COLUMN IF NOT EXISTS response_state TEXT NOT NULL DEFAULT 'sent';
+ALTER TABLE complaint_responses ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
 
 CREATE UNIQUE INDEX IF NOT EXISTS app_users_owner_id_idx ON app_users(owner_id);
 CREATE INDEX IF NOT EXISTS complaints_created_at_idx ON complaints(created_at DESC);

@@ -359,6 +359,10 @@ footer button {
   background: #eef8f2;
   border-left: 4px solid #58a879;
 }
+.draft-answer {
+  background: #fff7e8;
+  border-left-color: #dc9b36;
+}
 .answer p,
 .original {
   white-space: pre-wrap;
@@ -386,6 +390,29 @@ footer button {
 }
 .intake textarea {
   min-height: 140px;
+}
+.transfer-panel {
+  max-width: 1050px;
+  margin-top: 18px;
+  border-left: 4px solid #5e82ff;
+}
+.transfer-controls {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+.transfer-controls label {
+  flex: 1;
+  margin: 0;
+}
+.danger-button {
+  border: 1px solid #ffc8c8;
+  border-radius: 8px;
+  background: #fff;
+  color: #b43232;
+  padding: 11px 16px;
+  font-weight: 700;
+  cursor: pointer;
 }
 footer {
   display: flex;
@@ -431,6 +458,10 @@ footer span {
   }
   .list-head {
     display: block;
+  }
+  .transfer-controls {
+    display: grid;
+    align-items: stretch;
   }
   header {
     flex-direction: column;

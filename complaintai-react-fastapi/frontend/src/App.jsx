@@ -70,6 +70,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState(null);
   const [responseText, setResponseText] = useState("");
+  const [transferTarget, setTransferTarget] = useState("");
 
   const refresh = useCallback(async () => {
     const data = await api("/api/complaints/counts");
@@ -138,21 +139,37 @@ function Workspace({ auth, api, signout, server, setServer }) {
       }
     } catch (error) { setMessage(error.message); }
   };
-  const chooseForIntake = (record) => { setSelected(record); navigate("intake"); };
+  const chooseForIntake = (record) => { setSelected(record); setResponseText(record.latest_response_state === "draft" ? record.latest_response : ""); setTransferTarget(""); navigate("intake"); };
   const changeStatus = async (value) => {
     if (!selected) return;
     try { const data = await api(`/api/department/complaints/${selected.id}/status`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: value }) }); setSelected({ ...selected, ...data.complaint }); await refresh(); } catch (error) { setMessage(error.message); }
   };
-  const answer = async () => {
+  const saveDraft = async () => {
     if (!selected || !responseText.trim()) return setMessage("답변 내용을 입력해 주세요.");
     try {
       await api(`/api/department/complaints/${selected.id}/responses`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: responseText }) });
-      setSelected({ ...selected, complaint_status: "완료", latest_response: responseText }); setResponseText("");
-      setMessage("답변이 완료되어 민원인과 분류 목록에 즉시 반영되었습니다."); await refresh();
+      setSelected({ ...selected, complaint_status: "진행중", latest_response: responseText, latest_response_state: "draft" });
+      setMessage("답변이 임시 저장되었습니다. 민원인에게는 아직 표시되지 않습니다."); await refresh();
+    } catch (error) { setMessage(error.message); }
+  };
+  const deleteDraft = async () => {
+    if (!selected || !window.confirm("임시 저장한 답변을 삭제할까요?")) return;
+    try {
+      await api(`/api/department/complaints/${selected.id}/responses/draft`, { method: "DELETE" });
+      setSelected({ ...selected, complaint_status: "접수", latest_response: "", latest_response_state: "" }); setResponseText("");
+      setMessage("임시 저장 답변을 삭제했습니다."); await refresh();
+    } catch (error) { setMessage(error.message); }
+  };
+  const sendResponse = async () => {
+    if (!selected) return;
+    try {
+      await api(`/api/department/complaints/${selected.id}/responses/send`, { method: "POST" });
+      setSelected({ ...selected, complaint_status: "완료", latest_response_state: "sent" });
+      setMessage("답변을 민원인에게 전송했습니다."); await refresh();
     } catch (error) { setMessage(error.message); }
   };
   const transfer = async (category) => {
-    if (!selected || category === selected.category) return;
+    if (!selected || !category || category === selected.category) return;
     try {
       await api(`/api/department/complaints/${selected.id}/transfer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category }) });
       setSelected(null); setMessage(`${category} 부서로 전달했습니다.`); await refresh(); navigate("categories", true);
@@ -172,11 +189,32 @@ function Workspace({ auth, api, signout, server, setServer }) {
       {view === "upload" && <section className="panel compose"><h2>파일에서 일괄 가져오기</h2><p className="muted">각 행은 독립적인 민원으로 요약·분류되며, 담당 부서의 분류 목록에 저장됩니다.</p><label className="upload">파일 선택<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls,.csv" onChange={(e) => setFile(e.target.files?.[0])} /><small>{file?.name || "PDF, 이미지, XLSX, XLS, CSV"}</small></label><button className="primary" onClick={upload}>파일 일괄 처리</button>{job && <p className="muted">작업 ID: {job.job_id}</p>}</section>}
       {view === "submitted" && <ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} empty="작성한 민원이 없습니다." user onEdit={edit} onDelete={remove} />}
       {(view === "categories" || view === "deleted") && <><section className="category"><h2>{view === "deleted" ? "삭제된 데이터" : "분류 카테고리"}</h2>{view === "categories" && <div className="grid">{adminCategories.map((category) => <button key={category} className={active === category ? "selected" : ""} onClick={() => { setActive(category); setPage(1); }}><b>{counts[category] || 0}</b>{category}</button>)}</div>}</section><ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} deleted={view === "deleted"} empty="표시할 민원이 없습니다." onSelect={chooseForIntake} onDelete={remove} onRestore={restore} onHardDelete={hardDelete} /></>}
-      {view === "intake" && <section className="department-workspace"><article className="panel intake">{!selected ? <><h2>민원 접수</h2><p className="muted">민원 접수는 분류 목록에서 선택한 민원만 처리할 수 있습니다.</p><button className="primary" onClick={() => navigate("categories")}>분류 목록 이동</button></> : <><h2>{selected.title}</h2><p className="muted">{selected.category} · {selected.submitted_by_user ? "일반 사용자 민원" : "파일 민원"}</p><h3>원본 민원</h3><p className="original">{selected.content}</p><h3>요약</h3><p>{selected.summary}</p><label>민원 상태<select value={selected.complaint_status} onChange={(e) => changeStatus(e.target.value)}>{statuses.map((value) => <option key={value}>{value}</option>)}</select></label><label>다른 부서로 전달<select value={selected.category} onChange={(e) => transfer(e.target.value)}>{categories.map((category) => <option key={category}>{category}</option>)}</select></label>{selected.latest_response && <article className="answer"><b>답변 완료</b><p>{selected.latest_response}</p></article>}<label>답변 내용<textarea value={responseText} onChange={(e) => setResponseText(e.target.value)} placeholder="민원인에게 전달할 답변을 작성해 주세요." /></label><button className="primary" onClick={answer}>답변 완료</button></>}</article></section>}
+      {view === "intake" && <section className="department-workspace">
+        <article className="panel intake">
+          {!selected ? <><h2>민원 접수</h2><p className="muted">민원 접수는 분류 목록에서 선택한 민원만 처리할 수 있습니다.</p><button className="primary" onClick={() => navigate("categories")}>분류 목록 이동</button></> : <>
+            <h2>{selected.title}</h2>
+            <p className="muted">{selected.category} · {selected.submitted_by_user ? "일반 사용자 민원" : "파일 민원"}</p>
+            <h3>원본 민원</h3><p className="original">{selected.content}</p>
+            <h3>요약</h3><p>{selected.summary}</p>
+            <label>민원 상태<select value={selected.complaint_status} onChange={(e) => changeStatus(e.target.value)}>{statuses.map((value) => <option key={value}>{value}</option>)}</select></label>
+            {selected.latest_response && <article className={selected.latest_response_state === "draft" ? "answer draft-answer" : "answer"}><b>{selected.latest_response_state === "draft" ? "임시 저장 답변 · 관리자만 확인 가능" : "답변 전송 완료"}</b><p>{selected.latest_response}</p></article>}
+            <label>답변 내용<textarea value={responseText} onChange={(e) => setResponseText(e.target.value)} placeholder="민원인에게 전달할 답변을 작성해 주세요." /></label>
+            {selected.latest_response_state === "draft" ? <div className="actions"><button className="danger-button" onClick={deleteDraft}>임시 저장 삭제</button><button className="primary" onClick={sendResponse}>답변 전송</button></div> : <button className="primary" onClick={saveDraft}>답변 완료</button>}
+          </>}
+        </article>
+        {selected && <article className="panel transfer-panel">
+          <h2>다른 부서로 전달</h2>
+          <p className="muted">전달하면 민원은 선택한 부서의 분류 목록으로 이동하고 상태는 접수로 변경됩니다.</p>
+          <div className="transfer-controls">
+            <label>전달할 부서<select value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)}><option value="">부서를 선택하세요</option>{categories.filter((category) => category !== selected.category).map((category) => <option key={category}>{category}</option>)}</select></label>
+            <button className="primary" disabled={!transferTarget} onClick={() => transfer(transferTarget)}>부서 전달</button>
+          </div>
+        </article>}
+      </section>}
     </main>
   </div>;
 }
 
 function ComplaintList({ records, total, page, pageSize, setPage, setPageSize, empty, user, deleted, onEdit, onDelete, onRestore, onHardDelete, onSelect }) {
-  return <section className="panel"><div className="list-head"><h2>{deleted ? "삭제된 데이터 보관함" : user ? "내 민원 목록" : "부서 민원 보관함"}</h2><label>한 번에 보기<select value={pageSize} onChange={(e) => { setPageSize(+e.target.value); setPage(1); }}>{[10, 20, 50, 100].map((value) => <option key={value}>{value}</option>)}</select></label></div><div className="list">{records.map((record) => <article key={record.id}><div><h3>{record.title}</h3><p>{record.summary}</p><small>{record.category} · 상태: <b>{record.complaint_status}</b> · {new Date(record.created_at).toLocaleDateString()}</small><details><summary>원본 민원 확인</summary><p className="original">{record.content}</p></details>{record.latest_response && <div className="answer"><b>답변 완료</b><p>{record.latest_response}</p></div>}</div><div className="record-actions">{deleted ? <><button onClick={() => onRestore(record.id)}>복원</button><button className="danger" onClick={() => onHardDelete(record.id)}>영구 삭제</button></> : user ? <><button onClick={() => onEdit(record)}>수정</button><button className="danger" onClick={() => onDelete(record.id)}>삭제</button></> : <><button className="primary" onClick={() => onSelect(record)}>민원 접수</button><button className="danger" onClick={() => onDelete(record.id)}>삭제</button></>}</div></article>)}</div>{!records.length && <p>{empty}</p>}<footer><span>{total}건</span><button disabled={page <= 1} onClick={() => setPage(page - 1)}>이전</button><button disabled={page * pageSize >= total} onClick={() => setPage(page + 1)}>다음</button></footer></section>;
+  return <section className="panel"><div className="list-head"><h2>{deleted ? "삭제된 데이터 보관함" : user ? "내 민원 목록" : "부서 민원 보관함"}</h2><label>한 번에 보기<select value={pageSize} onChange={(e) => { setPageSize(+e.target.value); setPage(1); }}>{[10, 20, 50, 100].map((value) => <option key={value}>{value}</option>)}</select></label></div><div className="list">{records.map((record) => <article key={record.id}><div><h3>{record.title}</h3><p>{record.summary}</p><small>{record.category} · 상태: <b>{record.complaint_status}</b> · {new Date(record.created_at).toLocaleDateString()}</small><details><summary>원본 민원 확인</summary><p className="original">{record.content}</p></details>{record.latest_response && <div className={record.latest_response_state === "draft" ? "answer draft-answer" : "answer"}><b>{record.latest_response_state === "draft" ? "임시 저장 답변 · 관리자만 확인 가능" : "답변 완료"}</b><p>{record.latest_response}</p></div>}</div><div className="record-actions">{deleted ? <><button onClick={() => onRestore(record.id)}>복원</button><button className="danger" onClick={() => onHardDelete(record.id)}>영구 삭제</button></> : user ? <><button onClick={() => onEdit(record)}>수정</button><button className="danger" onClick={() => onDelete(record.id)}>삭제</button></> : <><button className="primary" onClick={() => onSelect(record)}>민원 접수</button><button className="danger" onClick={() => onDelete(record.id)}>삭제</button></>}</div></article>)}</div>{!records.length && <p>{empty}</p>}<footer><span>{total}건</span><button disabled={page <= 1} onClick={() => setPage(page - 1)}>이전</button><button disabled={page * pageSize >= total} onClick={() => setPage(page + 1)}>다음</button></footer></section>;
 }
