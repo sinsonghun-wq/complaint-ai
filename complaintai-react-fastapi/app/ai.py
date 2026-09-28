@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import re
+import time
 from typing import Any
 
 import httpx
@@ -21,6 +22,7 @@ KEYWORDS = {
     "소방": ["화재", "소방", "소화전", "피난", "불법 적치", "위험물"],
     "법률": ["법률", "법", "규정", "처벌", "권리", "분쟁"], "기타": [],
 }
+_embedding_unavailable_until = 0.0
 
 
 def clean(value: Any) -> str:
@@ -72,9 +74,13 @@ def embedding_document(record: dict[str, Any]) -> str:
 
 
 async def embedding(record: dict[str, Any]) -> list[float] | None:
+    global _embedding_unavailable_until
+    if time.monotonic() < _embedding_unavailable_until:
+        return None
     text = embedding_document(record)
     try:
-        async with httpx.AsyncClient(timeout=EMBEDDING_TIMEOUT_MS / 1000) as client:
+        # 대량 CSV에서 로컬 임베딩 서버가 꺼졌을 때 행마다 45초씩 대기하지 않는다.
+        async with httpx.AsyncClient(timeout=min(EMBEDDING_TIMEOUT_MS / 1000, 5)) as client:
             if EMBEDDING_PROVIDER == "ollama":
                 response = await client.post(f"{OLLAMA_URL}/api/embed", json={"model": OLLAMA_EMBEDDING_MODEL, "input": text, "keep_alive": "10m"})
                 response.raise_for_status(); vector = response.json().get("embeddings", [None])[0]
@@ -87,4 +93,5 @@ async def embedding(record: dict[str, Any]) -> list[float] | None:
         norm = math.sqrt(sum(value * value for value in vector))
         return [value / norm for value in vector] if norm else vector
     except Exception:
+        _embedding_unavailable_until = time.monotonic() + 30
         return None

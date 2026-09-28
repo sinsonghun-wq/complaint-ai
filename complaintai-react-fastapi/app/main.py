@@ -11,7 +11,6 @@ from typing import Annotated, Any
 
 import pandas as pd
 import psycopg
-from charset_normalizer import from_path
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -210,7 +209,7 @@ def complaints(deleted: bool = False, category: str | None = None, limit: int = 
     if actor["role"] == "admin": clause, scope = "owner_user_id IS NULL AND category=ANY(%s)", [allowed(actor)]
     else: clause, scope = "owner_user_id=%s", [actor["owner_id"]]
     where = "deleted_at IS NOT NULL" if deleted else "deleted_at IS NULL"
-    params: list[Any] = [*scope, category, limit, offset]
+    params: list[Any] = [*scope, category, category, limit, offset]
     sql = f"SELECT id,title,content,summary,category,complaint_status,source_file,source_row,processing_mode,llm_model,embedding_model,created_at,deleted_at FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s) ORDER BY {'deleted_at' if deleted else 'created_at'} DESC LIMIT %s OFFSET %s"
     rows = fetch_all(sql, params)
     total = fetch_one(f"SELECT COUNT(*)::int count FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s)", [*scope, category, category])
@@ -294,7 +293,14 @@ async def save_upload(upload: UploadFile, maximum: int) -> tuple[Path, str]:
 
 
 def csv_encoding(path: Path) -> str:
-    return (from_path(path).best().encoding or "utf_8").replace("utf_8", "utf-8")
+    # 한국어 UTF-8 CSV가 통계 기반 감지에서 CP949로 잘못 판정되면 제목·카테고리가 깨진다.
+    # 우선 엄격 UTF-8을 확인하고, 실패할 때만 국내 공공데이터의 CP949로 폴백한다.
+    sample = path.read_bytes()[:65536]
+    try:
+        sample.decode("utf-8")
+        return "utf-8-sig"
+    except UnicodeDecodeError:
+        return "cp949"
 
 
 def csv_rows(path: Path, encoding: str):

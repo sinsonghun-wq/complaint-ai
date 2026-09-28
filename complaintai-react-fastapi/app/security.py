@@ -21,7 +21,9 @@ def uuid4() -> str:
 
 def password_hash(password: str, salt_hex: str | None = None) -> tuple[str, str]:
     salt_hex = salt_hex or secrets.token_hex(16)
-    encoded = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt_hex), n=16384, r=8, p=1, dklen=64)
+    # Node 구현은 randomBytes().toString("hex") 결과를 다시 bytes로 풀지 않고
+    # 문자열 salt 그대로 crypto.scrypt()에 넘긴다. 기존 계정과 호환되도록 UTF-8 값을 쓴다.
+    encoded = hashlib.scrypt(password.encode(), salt=salt_hex.encode(), n=16384, r=8, p=1, dklen=64)
     return salt_hex, encoded.hex()
 
 
