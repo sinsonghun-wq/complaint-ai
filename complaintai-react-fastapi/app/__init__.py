@@ -1,0 +1,1 @@
+"""ComplaintAI FastAPI application."""
