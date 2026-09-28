@@ -11,7 +11,7 @@ from typing import Annotated, Any
 
 import pandas as pd
 import psycopg
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -452,56 +452,10 @@ def create_response(complaint_id: int, body: ResponseBody, actor: Annotated[dict
     return {"response": result}
 
 
-@app.get("/api/department/documents")
-def department_documents(actor: Annotated[dict, Depends(actor_from_auth)]):
-    categories = require_department(actor)
-    return {"documents": fetch_all("SELECT id,document_id,title,original_name,version,created_at FROM department_documents WHERE department=%s AND deleted_at IS NULL ORDER BY created_at DESC", (actor["department"],))}
-
-
-@app.delete("/api/department/documents/{document_id}")
-def remove_document(document_id: str, actor: Annotated[dict, Depends(actor_from_auth)]):
-    require_department(actor)
-    with connection() as conn:
-        with conn.cursor() as cur: cur.execute("UPDATE department_documents SET deleted_at=NOW() WHERE id=%s AND department=%s AND deleted_at IS NULL RETURNING id", (document_id, actor["department"])); result = cur.fetchone()
-        conn.commit()
-    return {"deleted": int(bool(result))}
-
-
-def department_document_text(path: Path, suffix: str) -> str:
-    if suffix == ".pdf": return "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
-    if suffix in {".txt", ".md", ".csv"}: return path.read_text(encoding="utf-8", errors="replace")
-    if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
-        from PIL import Image
-        import pytesseract
-        return pytesseract.image_to_string(Image.open(path), lang="kor+eng")
-    raise HTTPException(400, "PDF, 이미지, TXT, MD, CSV 문서만 지원합니다.")
-
-
-@app.post("/api/department/documents", status_code=201)
-async def upload_department_document(title: Annotated[str, Form()], file: UploadFile = File(...), actor: dict = Depends(actor_from_auth)):
-    require_department(actor)
-    path, suffix = await save_upload(file, DOCUMENT_MAX_UPLOAD_BYTES)
-    try:
-        content = department_document_text(path, suffix)
-        if not content.strip(): raise HTTPException(400, "문서에서 저장할 텍스트를 찾지 못했습니다.")
-        prior = fetch_one("SELECT document_id FROM department_documents WHERE department=%s AND title=%s AND deleted_at IS NULL ORDER BY version DESC LIMIT 1", (actor["department"], title.strip()))
-        logical_id = prior["document_id"] if prior else uuid4()
-        version = fetch_one("SELECT COALESCE(MAX(version),0)+1 version FROM department_documents WHERE document_id=%s AND department=%s", (logical_id, actor["department"]))["version"]
-        vector = await embedding({"title": title, "content": content, "summary": content[:700], "category": actor["department"], "keywords": []})
-        result_id = uuid4()
-        with connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("INSERT INTO department_documents(id,document_id,department,title,original_name,version,storage_path,content,embedding,created_by) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s::vector,%s) RETURNING id,document_id,title,version,created_at", (result_id, logical_id, actor["department"], title.strip(), file.filename, version, str(path), content, vector_literal(vector), actor["sub"]))
-                result = cur.fetchone()
-            conn.commit()
-        return {"document": result, "embedding_model": "Qwen/Qwen3-Embedding-4B", "dimension": 1536 if vector else 0}
-    except Exception:
-        path.unlink(missing_ok=True)
-        raise
-
-
 @app.get("/{path:path}")
 def react_app(path: str, request: Request):
+    if path.startswith("api/"):
+        raise HTTPException(404, "요청한 API를 찾을 수 없습니다.")
     if STATIC_DIR.exists():
         candidate = STATIC_DIR / path
         if path and candidate.is_file(): return FileResponse(candidate)

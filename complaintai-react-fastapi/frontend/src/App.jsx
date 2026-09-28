@@ -35,8 +35,6 @@ export default function App() {
   const [job, setJob] = useState(null);
   const [department, setDepartment] = useState([]);
   const [status, setStatus] = useState("");
-  const [docTitle, setDocTitle] = useState("");
-  const [docFile, setDocFile] = useState(null);
   const headers = useMemo(
     () => (auth?.token ? { Authorization: `Bearer ${auth.token}` } : {}),
     [auth],
@@ -263,8 +261,7 @@ export default function App() {
       const data = await api(
         `/api/department/complaints?status=${encodeURIComponent(status)}`,
       );
-      const docs = await api("/api/department/documents");
-      setDepartment([ctx, data, docs]);
+      setDepartment([ctx, data]);
     } catch (error) {
       setMessage(error.message);
     }
@@ -288,30 +285,6 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: text }),
       });
-  };
-  const uploadDocument = async () => {
-    if (!docFile) return setMessage("업로드할 문서를 선택해 주세요.");
-    try {
-      const form = new FormData();
-      form.append("title", docTitle || docFile.name);
-      form.append("file", docFile);
-      const result = await api("/api/department/documents", {
-        method: "POST",
-        body: form,
-      });
-      setMessage(`문서 버전 ${result.document.version} 저장 및 임베딩 완료`);
-      setDocTitle("");
-      setDocFile(null);
-      loadAdmin();
-    } catch (error) {
-      setMessage(error.message);
-    }
-  };
-  const removeDocument = async (id) => {
-    if (confirm("이 문서 버전을 삭제할까요?")) {
-      await api(`/api/department/documents/${id}`, { method: "DELETE" });
-      loadAdmin();
-    }
   };
   const pageTitle = {
     write: "새 민원 작성",
@@ -392,7 +365,7 @@ export default function App() {
         </header>
         {message && <p className="notice">{message}</p>}
         {view === "write" && (
-          <section className="two">
+          <section>
             <article>
               <h2>민원 내용을 입력하세요</h2>
               <label>
@@ -603,45 +576,6 @@ export default function App() {
                     ))}
                   </select>
                   <button onClick={() => reply(item.id)}>응답 작성</button>
-                </div>
-              ))}
-            </article>
-            <article className="panel">
-              <h2>부서 자료 관리</h2>
-              <label>
-                문서 제목
-                <input
-                  value={docTitle}
-                  onChange={(e) => setDocTitle(e.target.value)}
-                  placeholder="예: 주정차 단속 업무 지침"
-                />
-              </label>
-              <label className="upload">
-                문서 선택
-                <input
-                  type="file"
-                  accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.csv"
-                  onChange={(e) => setDocFile(e.target.files?.[0])}
-                />
-                <small>{docFile?.name || "PDF, 이미지, TXT, MD, CSV"}</small>
-              </label>
-              <button className="primary" onClick={uploadDocument}>
-                문서 추가 및 임베딩
-              </button>
-              {department[2]?.documents.map((doc) => (
-                <div className="work" key={doc.id}>
-                  <div>
-                    <b>{doc.title}</b>
-                    <small>
-                      {doc.original_name} · 버전 {doc.version}
-                    </small>
-                  </div>
-                  <button
-                    className="danger"
-                    onClick={() => removeDocument(doc.id)}
-                  >
-                    문서 삭제
-                  </button>
                 </div>
               ))}
             </article>
