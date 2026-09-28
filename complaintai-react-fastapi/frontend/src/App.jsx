@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-const categories=['행정·안전·생활서비스','교통·주차','주택건축','도로·시설물','환경·위생','보건복지','소방','법률','기타'];
+const categories=['행정·안전','국토·교통','주택건축','환경·위생','보건복지','소방','기타'];
 const icons=['⌂','↔','⌂','▰','♧','♥','♨','⚖','⋯'];
 const key='complaintai.fastapi.auth';
 
