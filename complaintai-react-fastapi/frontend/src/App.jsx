@@ -198,11 +198,10 @@ function Workspace({ auth, api, signout, server, setServer }) {
             <h3>요약</h3><p>{selected.summary}</p>
             <label>민원 상태<select value={selected.complaint_status} onChange={(e) => changeStatus(e.target.value)}>{statuses.map((value) => <option key={value}>{value}</option>)}</select></label>
             {selected.latest_response && <article className={selected.latest_response_state === "draft" ? "answer draft-answer" : "answer"}><b>{selected.latest_response_state === "draft" ? "임시 저장 답변 · 관리자만 확인 가능" : "답변 전송 완료"}</b><p>{selected.latest_response}</p></article>}
-            <label>답변 내용<textarea value={responseText} onChange={(e) => setResponseText(e.target.value)} placeholder="민원인에게 전달할 답변을 작성해 주세요." /></label>
-            {selected.latest_response_state === "draft" ? <div className="actions"><button className="danger-button" onClick={deleteDraft}>임시 저장 삭제</button><button className="primary" onClick={sendResponse}>답변 전송</button></div> : <button className="primary" onClick={saveDraft}>답변 완료</button>}
+            {selected.latest_response_state === "sent" ? <article className="completion"><h3>민원 답변이 완료되었습니다.</h3><p>새로운 민원 접수를 하시겠습니까?</p><button className="primary" onClick={() => { setSelected(null); setResponseText(""); navigate("categories"); }}>분류 목록으로 이동</button></article> : <><label>답변 내용<textarea value={responseText} onChange={(e) => setResponseText(e.target.value)} placeholder="민원인에게 전달할 답변을 작성해 주세요." /></label>{selected.latest_response_state === "draft" ? <div className="actions"><button className="danger-button" onClick={deleteDraft}>임시 저장 삭제</button><button className="primary" onClick={sendResponse}>답변 전송</button></div> : <button className="primary" onClick={saveDraft}>답변 완료</button>}</>}
           </>}
         </article>
-        {selected && <article className="panel transfer-panel">
+        {selected && selected.latest_response_state !== "sent" && <article className="panel transfer-panel">
           <h2>다른 부서로 전달</h2>
           <p className="muted">전달하면 민원은 선택한 부서의 분류 목록으로 이동하고 상태는 접수로 변경됩니다.</p>
           <div className="transfer-controls">

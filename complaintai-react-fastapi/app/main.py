@@ -506,6 +506,9 @@ def create_response(complaint_id: int, body: ResponseBody, actor: Annotated[dict
     if not 2 <= len(content) <= 5000: raise HTTPException(400, "응답은 2~5,000자로 작성해 주세요.")
     with connection() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM complaint_responses WHERE complaint_id=%s AND response_state='sent' LIMIT 1", (complaint_id,))
+            if cur.fetchone():
+                raise HTTPException(409, "이미 답변 전송이 완료된 민원입니다.")
             # 같은 관리자가 남긴 이전 임시 답변은 교체해 한 민원에 하나의 최신 초안만 유지한다.
             cur.execute("DELETE FROM complaint_responses WHERE complaint_id=%s AND author_user_id=%s AND response_state='draft'", (complaint_id, actor["sub"]))
             cur.execute("INSERT INTO complaint_responses(id,complaint_id,author_user_id,department,content,response_state) VALUES(%s,%s,%s,%s,%s,'draft') RETURNING id,content,response_state,created_at", (uuid4(), complaint_id, actor["sub"], actor.get("department"), content)); result = cur.fetchone()

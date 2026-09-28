@@ -392,8 +392,9 @@ footer button {
   min-height: 140px;
 }
 .transfer-panel {
-  max-width: 1050px;
+  max-width: 760px;
   margin-top: 18px;
+  padding: 20px;
   border-left: 4px solid #5e82ff;
 }
 .transfer-controls {
@@ -413,6 +414,17 @@ footer button {
   padding: 11px 16px;
   font-weight: 700;
   cursor: pointer;
+}
+.completion {
+  margin-top: 22px;
+  padding: 22px;
+  border: 1px solid #bae1c8;
+  border-radius: 10px;
+  background: #eef8f2;
+}
+.completion h3,
+.completion p {
+  margin-top: 0;
 }
 footer {
   display: flex;
