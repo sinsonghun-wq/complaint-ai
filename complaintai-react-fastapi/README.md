@@ -16,6 +16,29 @@
 
 기존 데이터베이스를 7개 체계로 이전할 때는 `scripts/migrate_to_seven_departments.sql`을 실행한다. 이 스크립트는 기존 분류·부서 참조를 함께 바꾼다.
 
+## 테스트 계정
+
+아래 계정은 로컬 개발·검증 전용 계정이다. 실제 서비스 환경에서는 초기 비밀번호를 문서에 저장하지 않고, 각 계정의 비밀번호를 별도로 설정해야 한다.
+
+### 일반 사용자
+
+| 계정 이름 | ID | 비밀번호 |
+| --- | --- | --- |
+| 테스트 일반 사용자 A | `user-a` | `UserA!2026` |
+| 테스트 일반 사용자 B | `user-b` | `UserB!2026` |
+
+### 관리자
+
+| 계정 이름 | ID | 비밀번호 | 담당 부서 |
+| --- | --- | --- | --- |
+| 행정·안전 관리자 | `admin-administration-safety` | `AdminService!2026` | 행정·안전 |
+| 국토·교통 관리자 | `admin-land-transport` | `AdminLand!2026` | 국토·교통 |
+| 주택건축 관리자 | `admin-housing` | `AdminHousing!2026` | 주택건축 |
+| 환경·위생 관리자 | `admin-environment` | `AdminEnvironment!2026` | 환경·위생 |
+| 보건복지 관리자 | `admin-welfare` | `AdminWelfare!2026` | 보건복지 |
+| 소방 관리자 | `admin-fire` | `AdminFire!2026` | 소방 |
+| 기타 관리자 | `admin-other` | `AdminOther!2026` | 기타 |
+
 ## 실행
 
 ```powershell
