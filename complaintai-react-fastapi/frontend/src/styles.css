@@ -267,6 +267,10 @@ footer button {
   border-color: #ffc8c8;
   color: #b43232;
 }
+footer .danger {
+  border-color: #ffc8c8;
+  color: #b43232;
+}
 .work select {
   width: 95px;
 }

@@ -513,6 +513,8 @@ def soft_delete(complaint_id: int, actor: Annotated[dict, Depends(actor_from_aut
 @app.delete("/api/complaints/category/{category}")
 def delete_category(category: str, actor: Annotated[dict, Depends(actor_from_auth)]):
     if category not in CATEGORIES: raise HTTPException(400, "허용되지 않은 카테고리입니다.")
+    if category not in require_department(actor):
+        raise HTTPException(403, "담당 부서의 민원만 전체 삭제할 수 있습니다.")
     clause, args = scoped_where(actor)
     with connection() as conn:
         with conn.cursor() as cur:
