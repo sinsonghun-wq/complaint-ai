@@ -66,6 +66,18 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 - PDF: 페이지별로 `pypdf`와 `pdfplumber`의 텍스트 추출 결과를 비교한다. 제목·`신청원인` 구조를 가진 페이지는 각각 하나의 민원으로 분리한다. 텍스트 품질이 낮은 페이지에만 PyMuPDF 렌더링과 Tesseract OCR을 재시도한다.
 - HWP: `hwp5txt`(pyhwp)가 있으면 먼저 텍스트를 추출한다. 낮은 품질이면 LibreOffice의 HWP-to-PDF 변환 결과를 PDF/OCR 흐름으로 다시 처리한다. Windows에서 HWP는 별도 설치가 필요하므로 `hwp5txt` 또는 LibreOffice가 없는 환경에서는 업로드가 안내 오류로 끝난다.
 
+### HWP 파서 준비
+
+HWP 기능은 프로젝트에 포함하지 않는 별도 파서 환경을 사용한다. 새 컴퓨터에서 처음 한 번 다음을 실행한다. Python 3.11과 인터넷 연결이 필요하다.
+
+```powershell
+cd C:\경로\complaintAI\complaintai-react-fastapi
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup_hwp_parser.ps1
+```
+
+성공하면 `.hwp-parser\Scripts\hwp5txt.exe`가 생성된다. 이 폴더는 Git에 올리지 않으며, FastAPI 서버는 해당 실행 파일을 자동으로 찾는다. 파서 또는 LibreOffice를 찾지 못한 경우에는 서버가 HTTP 500 대신 설치 안내가 담긴 HTTP 503을 반환한다.
+
 현재 HWP 표는 `hwp5txt`가 표의 셀 배치를 보장하지 않으므로, 표 구조를 그대로 보존하는 처리(예: `hwp5html` 기반 셀 파싱)는 별도 보완 항목이다.
 
 ## 검증용 CSV

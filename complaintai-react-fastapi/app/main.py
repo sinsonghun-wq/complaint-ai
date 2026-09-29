@@ -318,10 +318,14 @@ def _hwp_to_pdf_records(path: Path, filename: str) -> list[dict[str, Any]]:
         return []
     conversion_root = FILE_STORAGE_DIR / "conversion-temp"
     conversion_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="complaintai-hwp-", dir=conversion_root) as output_dir:
-        converted = subprocess.run([converter, "--headless", "--convert-to", "pdf", "--outdir", output_dir, str(path)], capture_output=True, check=False)
-        pdf_path = Path(output_dir) / f"{path.stem}.pdf"
-        return pdf_records(pdf_path, filename) if not converted.returncode and pdf_path.exists() else []
+    try:
+        with tempfile.TemporaryDirectory(prefix="complaintai-hwp-", dir=conversion_root) as output_dir:
+            converted = subprocess.run([converter, "--headless", "--convert-to", "pdf", "--outdir", output_dir, str(path)], capture_output=True, check=False)
+            pdf_path = Path(output_dir) / f"{path.stem}.pdf"
+            return pdf_records(pdf_path, filename) if not converted.returncode and pdf_path.exists() else []
+    except OSError:
+        # A missing converter or an unavailable conversion folder must not turn an HWP setup issue into HTTP 500.
+        return []
 
 
 def hwp_records(path: Path, filename: str) -> list[dict[str, Any]]:
