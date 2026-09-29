@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: complaintai
       POSTGRES_USER: complaintai
-      POSTGRES_PASSWORD: complaintai_dev_password
+      POSTGRES_PASSWORD: ComplaintAI_PG16_2026!
     ports:
       - "5433:5432"
     volumes:

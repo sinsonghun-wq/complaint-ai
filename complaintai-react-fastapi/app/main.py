@@ -3,7 +3,11 @@ from __future__ import annotations
 import asyncio
 import csv
 import json
+import re
 import shutil
+import subprocess
+import sys
+import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +15,7 @@ from typing import Annotated, Any
 
 import pandas as pd
 import psycopg
+from openpyxl import load_workbook
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -21,7 +26,7 @@ from pypdf import PdfReader
 from .ai import CATEGORIES, analyze, embedding, fallback, fingerprint
 from .db import connection, fetch_all, fetch_one
 from .security import actor_from_auth, current_account, issue_token, password_hash, public_user, uuid4, verify_password
-from .settings import CSV_MAX_UPLOAD_BYTES, DOCUMENT_MAX_UPLOAD_BYTES, FILE_STORAGE_DIR, LLM_IMPORT_ENABLED, MAX_BATCH_SIZE, WEB_ORIGINS
+from .settings import CSV_MAX_UPLOAD_BYTES, DOCUMENT_MAX_UPLOAD_BYTES, FILE_STORAGE_DIR, LLM_IMPORT_ENABLED, MAX_BATCH_SIZE, TESSDATA_DIR, TESSERACT_CMD, WEB_ORIGINS
 
 app = FastAPI(title="ComplaintAI FastAPI", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=WEB_ORIGINS if WEB_ORIGINS != ["*"] else ["*"], allow_credentials=WEB_ORIGINS != ["*"], allow_methods=["*"], allow_headers=["*"])
@@ -113,9 +118,229 @@ def row_to_complaint(row: dict[str, Any], source_row: int) -> dict[str, Any] | N
         return {"source_row": source_row, **fallback(" · ".join(filter(None, [item, dispute])), f"{dispute}\n{solution}")} if solution else None
     def column(words: list[str]) -> str | None:
         return next((header for header in headers if any(word.lower() in str(header).lower() for word in words)), None)
-    title_key, content_key = column(["민원 제목", "제목", "title", "subject"]), column(["민원 내용", "민원내용", "원문", "내용", "complaint", "content", "질문"])
+    title_key, content_key = column(["민원 제목", "제목", "title", "subject"]), column(["민원 내용", "민원내용", "신청원인", "원문", "내용", "complaint", "content", "질문"])
     content = str(row.get(content_key, "")).strip() if content_key else ""
     return {"source_row": source_row, **fallback(str(row.get(title_key, "")) if title_key else "", content)} if content else None
+
+
+def _cell_text(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _is_complaint_header(values: list[Any]) -> bool:
+    headers = [re.sub(r"\s+", "", _cell_text(value)).lower() for value in values]
+    # Use exact labels here. 안내 시트의 설명문에 “제목·신청원인”이 있어 부분 일치로는 오탐이 난다.
+    has_title = any(value in {"민원제목", "제목", "title", "subject"} for value in headers)
+    has_content = any(value in {"민원내용", "신청원인", "원문", "내용", "complaint", "content", "질문"} for value in headers)
+    return has_title and has_content
+
+
+def _records_from_rows(rows: list[tuple[int, list[Any]]], sheet_name: str = "") -> list[dict[str, Any]]:
+    """Find a complaint table inside one worksheet and return one record per row."""
+    header_at = next((index for index, (_, values) in enumerate(rows[:30]) if _is_complaint_header(values)), None)
+    if header_at is None:
+        return []
+    _, header_values = rows[header_at]
+    headers = [_cell_text(value) for value in header_values]
+    records: list[dict[str, Any]] = []
+    for source_row, values in rows[header_at + 1:]:
+        row = {headers[index]: _cell_text(value) for index, value in enumerate(values) if index < len(headers) and headers[index]}
+        record = row_to_complaint(row, source_row)
+        if record:
+            record["source_sheet"] = sheet_name
+            records.append(record)
+    return records
+
+
+def spreadsheet_records(path: Path, suffix: str) -> list[dict[str, Any]]:
+    """Read every data sheet; a worksheet is never treated as one complaint."""
+    records: list[dict[str, Any]] = []
+    if suffix == ".xlsx":
+        workbook = load_workbook(path, read_only=True, data_only=True)
+        try:
+            for worksheet in workbook.worksheets:
+                rows = [(number, list(values)) for number, values in enumerate(worksheet.iter_rows(values_only=True), start=1)]
+                records.extend(_records_from_rows(rows, worksheet.title))
+                if len(records) >= MAX_BATCH_SIZE:
+                    break
+        finally:
+            workbook.close()
+    else:
+        # XLS cannot be opened by openpyxl. Keep the same multi-sheet behaviour through pandas/xlrd.
+        sheets = pd.read_excel(path, sheet_name=None, header=None, dtype=object)
+        for sheet_name, frame in sheets.items():
+            rows = [(number, row) for number, row in enumerate(frame.fillna("").values.tolist(), start=1)]
+            records.extend(_records_from_rows(rows, str(sheet_name)))
+            if len(records) >= MAX_BATCH_SIZE:
+                break
+    return records[:MAX_BATCH_SIZE]
+
+
+def _text_quality(text: str, required_markers: tuple[str, ...] = ()) -> float:
+    """Heuristic extraction confidence, not a claim of ground-truth OCR accuracy."""
+    compact = re.sub(r"\s+", "", text or "")
+    if not compact:
+        return 0.0
+    readable = sum(character.isalnum() or "가" <= character <= "힣" or character in ".,!?·()[]'\"-:/" for character in compact)
+    score = min(len(compact) / 160, 1.0) * 0.45 + (readable / len(compact)) * 0.35
+    score += 0.20 * (sum(marker in text for marker in required_markers) / max(len(required_markers), 1))
+    return round(min(score, 1.0), 3)
+
+
+def _ocr_pdf_page(path: Path, page_index: int) -> str:
+    """Render only an uncertain page. PyMuPDF/Tesseract remain optional runtime dependencies."""
+    try:
+        import fitz
+        from PIL import Image
+        import pytesseract
+        document = fitz.open(path)
+        page = document.load_page(page_index)
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+        image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
+        return ocr_image(image, pytesseract)
+    except Exception:
+        return ""
+
+
+def _installed_tool(name: str) -> str | None:
+    """Find a CLI on PATH, in the active virtual environment, or at LibreOffice's Windows default path."""
+    found = shutil.which(name)
+    if found:
+        return found
+    extension = ".exe" if sys.platform == "win32" else ""
+    candidates = [Path(sys.executable).with_name(f"{name}{extension}")]
+    if name == "soffice" and sys.platform == "win32":
+        candidates.extend([
+            Path("C:/Program Files/LibreOffice/program/soffice.exe"),
+            Path("C:/Program Files (x86)/LibreOffice/program/soffice.exe"),
+        ])
+    if name == "tesseract" and sys.platform == "win32":
+        candidates.extend([
+            Path("C:/Program Files/Tesseract-OCR/tesseract.exe"),
+            Path("C:/Program Files (x86)/Tesseract-OCR/tesseract.exe"),
+        ])
+    if name == "hwp5txt" and sys.platform == "win32":
+        candidates.append(Path(__file__).resolve().parents[1] / ".hwp-parser" / "Scripts" / "hwp5txt.exe")
+    return next((str(candidate) for candidate in candidates if candidate.is_file()), None)
+
+
+def ocr_image(image: Any, pytesseract_module: Any | None = None) -> str:
+    """Run Korean/English OCR using ComplaintAI's project-local official language models."""
+    if not TESSDATA_DIR.is_dir() or not (TESSDATA_DIR / "kor.traineddata").is_file() or not (TESSDATA_DIR / "eng.traineddata").is_file():
+        raise RuntimeError("Tesseract 한국어·영어 언어 데이터가 준비되지 않았습니다.")
+    if pytesseract_module is None:
+        import pytesseract as pytesseract_module
+    executable = TESSERACT_CMD or _installed_tool("tesseract")
+    if not executable:
+        raise RuntimeError("Tesseract 실행 파일을 찾지 못했습니다.")
+    pytesseract_module.pytesseract.tesseract_cmd = executable
+    # The project path has no spaces. Do not quote it here: pytesseract passes quotes literally to Tesseract on Windows.
+    return pytesseract_module.image_to_string(image, lang="kor+eng", config=f"--tessdata-dir {TESSDATA_DIR}")
+
+
+def _pdf_page_candidates(path: Path) -> list[tuple[str, float, float]]:
+    reader = PdfReader(path)
+    native = [page.extract_text(extraction_mode="layout") or "" for page in reader.pages]
+    plumber_text = [""] * len(native)
+    image_coverage = [0.0] * len(native)
+    try:
+        import pdfplumber
+        with pdfplumber.open(path) as pdf:
+            for index, page in enumerate(pdf.pages):
+                plumber_text[index] = page.extract_text() or ""
+                page_area = max(float(page.width * page.height), 1.0)
+                image_coverage[index] = min(1.0, sum(float(item.get("width", 0) * item.get("height", 0)) for item in page.images) / page_area)
+    except Exception:
+        pass
+
+    selected: list[tuple[str, float, float]] = []
+    for index, primary in enumerate(native):
+        alternate = plumber_text[index]
+        primary_score = _text_quality(primary, ("신청원인",))
+        alternate_score = _text_quality(alternate, ("신청원인",))
+        text, score = (alternate, alternate_score) if alternate_score > primary_score else (primary, primary_score)
+        # Image coverage is only a guardrail. Text quality remains the routing decision.
+        if score < 0.62 or (image_coverage[index] >= 0.70 and score < 0.82):
+            ocr_text = _ocr_pdf_page(path, index)
+            ocr_score = _text_quality(ocr_text, ("신청원인",))
+            if ocr_score > score:
+                text, score = ocr_text, ocr_score
+        selected.append((text, score, image_coverage[index]))
+    return selected
+
+
+def _records_from_case_pages(pages: list[tuple[str, float, float]], filename: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for page_number, (text, _score, _coverage) in enumerate(pages, start=1):
+        heading = re.search(r"사례\s*(\d{3})", text)
+        marker = re.search(r"신청원인\s*", text)
+        if not heading or not marker:
+            continue
+        before = text[:marker.start()].splitlines()
+        title_lines = [line.strip() for line in before if line.strip() and not re.search(r"사례\s*\d{3}", line)]
+        body = text[marker.end():]
+        body = re.split(r"피신청인\s*등의\s*주장|가상\s*민원\s*데이터", body, maxsplit=1)[0].strip()
+        title = " ".join(title_lines).strip()
+        if title and body:
+            records.append({"source_row": page_number, "source_case": heading.group(1), **fallback(title, body)})
+    if records:
+        return records[:MAX_BATCH_SIZE]
+    combined = "\n".join(text for text, _, _ in pages).strip()
+    return [{"source_row": 1, **fallback(Path(filename).stem, combined)}] if combined else []
+
+
+def _records_from_hwp_text(text: str, filename: str) -> list[dict[str, Any]]:
+    """Split the repeated HWP '분야 / 사례 NNN' blocks into individual complaints."""
+    headings = list(re.finditer(r"(?m)^\s*\d{2}\s+.+?/\s*사례\s*(\d{3})\s*$", text))
+    records: list[dict[str, Any]] = []
+    for index, heading in enumerate(headings):
+        block = text[heading.end(): headings[index + 1].start() if index + 1 < len(headings) else len(text)]
+        marker = re.search(r"신청원인\s*", block)
+        if not marker:
+            continue
+        title = " ".join(line.strip() for line in block[:marker.start()].splitlines() if line.strip())
+        body = re.split(r"피신청인\s*등의\s*주장|가상\s*민원\s*데이터", block[marker.end():], maxsplit=1)[0].strip()
+        if title and body:
+            records.append({"source_row": int(heading.group(1)), "source_case": heading.group(1), **fallback(title, body)})
+    if records:
+        return records[:MAX_BATCH_SIZE]
+    return _records_from_case_pages([(text, _text_quality(text, ("신청원인",)), 0.0)], filename)
+
+
+def pdf_records(path: Path, filename: str) -> list[dict[str, Any]]:
+    return _records_from_case_pages(_pdf_page_candidates(path), filename)
+
+
+def _hwp_to_pdf_records(path: Path, filename: str) -> list[dict[str, Any]]:
+    """Optional fallback for low-confidence HWP extraction on computers with LibreOffice."""
+    converter = _installed_tool("soffice")
+    if not converter:
+        return []
+    conversion_root = FILE_STORAGE_DIR / "conversion-temp"
+    conversion_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="complaintai-hwp-", dir=conversion_root) as output_dir:
+        converted = subprocess.run([converter, "--headless", "--convert-to", "pdf", "--outdir", output_dir, str(path)], capture_output=True, check=False)
+        pdf_path = Path(output_dir) / f"{path.stem}.pdf"
+        return pdf_records(pdf_path, filename) if not converted.returncode and pdf_path.exists() else []
+
+
+def hwp_records(path: Path, filename: str) -> list[dict[str, Any]]:
+    """Prefer pyhwp text, then convert only low-confidence HWP input for the PDF/OCR pipeline."""
+    extractor = _installed_tool("hwp5txt")
+    text = ""
+    if extractor:
+        completed = subprocess.run([extractor, str(path)], capture_output=True, check=False)
+        if not completed.returncode:
+            text = completed.stdout.decode("utf-8", errors="replace").strip()
+    confidence = _text_quality(text, ("신청원인",))
+    if text and confidence >= 0.62:
+        return _records_from_hwp_text(text, filename)
+    converted_records = _hwp_to_pdf_records(path, filename)
+    if converted_records:
+        return converted_records
+    if text:
+        return _records_from_hwp_text(text, filename)
+    raise HTTPException(503, "HWP 텍스트 추출기(hwp5txt/pyhwp) 또는 HWP-to-PDF 변환기가 설치되어 있지 않습니다.")
 
 
 def insert_complaint(conn: psycopg.Connection, record: dict[str, Any], source_file: str | None, source_row: int | None, stored_owner: str | None, vector: list[float] | None = None) -> bool:
@@ -445,11 +670,11 @@ async def intake(file: UploadFile = File(...), actor: dict = Depends(actor_from_
             rows = list(csv_rows(path, csv_encoding(path)))[:MAX_BATCH_SIZE]
             records = [record for index, row in enumerate(rows, start=2) if (record := row_to_complaint(row, index))]
         elif suffix in {".xlsx", ".xls"}:
-            frame = pd.read_excel(path, nrows=MAX_BATCH_SIZE)
-            records = [record for index, row in enumerate(frame.fillna("").to_dict("records"), start=2) if (record := row_to_complaint(row, index))]
+            records = spreadsheet_records(path, suffix)
         elif suffix == ".pdf":
-            text = "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
-            records = [{"source_row": 1, **fallback(Path(file.filename or "문서").stem, text)}]
+            records = pdf_records(path, file.filename or "문서.pdf")
+        elif suffix == ".hwp":
+            records = hwp_records(path, file.filename or "문서.hwp")
         elif suffix in {".png", ".jpg", ".jpeg", ".webp"}:
             try:
                 from PIL import Image
@@ -457,7 +682,9 @@ async def intake(file: UploadFile = File(...), actor: dict = Depends(actor_from_
                 text = pytesseract.image_to_string(Image.open(path), lang="kor+eng")
             except Exception as error: raise HTTPException(503, f"OCR을 실행하지 못했습니다: {error}")
             records = [{"source_row": 1, **fallback(Path(file.filename or "이미지").stem, text)}]
-        else: raise HTTPException(400, "PDF, 이미지, XLSX, XLS, CSV 파일만 지원합니다.")
+        else: raise HTTPException(400, "HWP, PDF, 이미지, XLSX, XLS, CSV 파일만 지원합니다.")
+        if not records:
+            raise HTTPException(422, "민원 제목과 본문을 가진 데이터를 찾지 못했습니다.")
         return {"file_name": file.filename, "processed": len(records), "max_batch_size": MAX_BATCH_SIZE, "complaints": records}
     finally: path.unlink(missing_ok=True)
 

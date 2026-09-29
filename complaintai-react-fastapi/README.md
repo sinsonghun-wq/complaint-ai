@@ -60,6 +60,14 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 브라우저에서 `http://127.0.0.1:8000`을 연다. 개발 중에는 `frontend`에서 `npm run dev`를 별도로 실행할 수 있다.
 
+## 문서 추출 방식
+
+- XLSX: `openpyxl`로 모든 시트를 순회한다. 각 시트에서 `제목`과 `신청원인`(또는 민원 본문 열)이 함께 있는 헤더 행을 찾고, 이후의 각 행을 별도 민원으로 처리한다. 안내 시트는 자동으로 건너뛴다.
+- PDF: 페이지별로 `pypdf`와 `pdfplumber`의 텍스트 추출 결과를 비교한다. 제목·`신청원인` 구조를 가진 페이지는 각각 하나의 민원으로 분리한다. 텍스트 품질이 낮은 페이지에만 PyMuPDF 렌더링과 Tesseract OCR을 재시도한다.
+- HWP: `hwp5txt`(pyhwp)가 있으면 먼저 텍스트를 추출한다. 낮은 품질이면 LibreOffice의 HWP-to-PDF 변환 결과를 PDF/OCR 흐름으로 다시 처리한다. Windows에서 HWP는 별도 설치가 필요하므로 `hwp5txt` 또는 LibreOffice가 없는 환경에서는 업로드가 안내 오류로 끝난다.
+
+현재 HWP 표는 `hwp5txt`가 표의 셀 배치를 보장하지 않으므로, 표 구조를 그대로 보존하는 처리(예: `hwp5html` 기반 셀 파싱)는 별도 보완 항목이다.
+
 ## 검증용 CSV
 
 `tests/fixtures/complaints-smoke.csv`는 다음을 확인하기 위한 2행 CSV다.
