@@ -139,6 +139,15 @@ header input {
 .category {
   margin-bottom: 20px;
 }
+.category-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.category-head h2 {
+  margin: 0 0 16px;
+}
 .grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -156,6 +165,19 @@ header input {
 .grid button.selected {
   border-color: #5e82ff;
   background: #edf2ff;
+}
+.grid button.department-owned {
+  border-color: #86d8ee;
+  background: #e9f9ff;
+  color: #135a73;
+}
+.grid button.department-owned.selected {
+  border-color: #38bde3;
+  background: #d8f5ff;
+  box-shadow: 0 0 0 1px #b4ebfa;
+}
+.grid button.department-owned b {
+  color: #1683a5;
 }
 .grid i {
   font-style: normal;
@@ -266,6 +288,10 @@ footer button {
 .list .danger {
   border-color: #ffc8c8;
   color: #b43232;
+}
+.read-only {
+  color: #738198;
+  font-size: 13px;
 }
 footer .danger {
   border-color: #ffc8c8;
@@ -429,6 +455,29 @@ footer .danger {
 .completion h3,
 .completion p {
   margin-top: 0;
+}
+.csv-mapping {
+  display: grid;
+  gap: 14px;
+}
+.csv-mapping fieldset {
+  border: 1px solid #d2ddec;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.csv-mapping legend {
+  color: #34517e;
+  font-weight: 700;
+}
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 5px 12px 5px 0;
+  font-size: 14px;
+}
+.checkbox-row input {
+  width: auto;
 }
 footer {
   display: flex;

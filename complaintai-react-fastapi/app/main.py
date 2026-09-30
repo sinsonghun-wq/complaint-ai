@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import json
 import re
 import shutil
@@ -16,17 +17,17 @@ from typing import Annotated, Any
 import pandas as pd
 import psycopg
 from openpyxl import load_workbook
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
-from .ai import CATEGORIES, analyze, embedding, fallback, fingerprint
+from .ai import CATEGORIES, analyze, embedding, fallback, fingerprint, infer_csv_mapping
 from .db import connection, fetch_all, fetch_one
 from .security import actor_from_auth, current_account, issue_token, password_hash, public_user, uuid4, verify_password
-from .settings import CSV_MAX_UPLOAD_BYTES, DOCUMENT_MAX_UPLOAD_BYTES, FILE_STORAGE_DIR, LLM_IMPORT_ENABLED, MAX_BATCH_SIZE, TESSDATA_DIR, TESSERACT_CMD, WEB_ORIGINS
+from .settings import CSV_LLM_CONFIDENCE_THRESHOLD, CSV_MAX_UPLOAD_BYTES, CSV_RULE_OTHER_MIN_CONTENT_CHARS, DOCUMENT_MAX_UPLOAD_BYTES, FILE_STORAGE_DIR, IMPORT_PROGRESS_ROWS, LLM_IMPORT_CONCURRENCY, LLM_IMPORT_ENABLED, MAX_BATCH_SIZE, TESSDATA_DIR, TESSERACT_CMD, WEB_ORIGINS
 
 app = FastAPI(title="ComplaintAI FastAPI", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=WEB_ORIGINS if WEB_ORIGINS != ["*"] else ["*"], allow_credentials=WEB_ORIGINS != ["*"], allow_methods=["*"], allow_headers=["*"])
@@ -76,6 +77,15 @@ class TransferBody(BaseModel):
     category: str
 
 
+class CsvMappingBody(BaseModel):
+    profile_name: str = ""
+    title_column: str = ""
+    content_columns: list[str] = Field(default_factory=list)
+    response_column: str = ""
+    category_column: str = ""
+    save_mapping: bool = True
+
+
 def owner_id(actor: dict[str, Any]) -> str | None:
     return None if actor["role"] == "admin" else actor["owner_id"]
 
@@ -117,10 +127,67 @@ def row_to_complaint(row: dict[str, Any], source_row: int) -> dict[str, Any] | N
         item, dispute, solution = str(row.get("품목명(ITEM_NAME)", "")).strip(), str(row.get("분쟁유형명(DISPUTE_TYPE_NAME)", "")).strip(), str(row.get("해결명(SOLUTION_CRTR_NAME)", "")).strip()
         return {"source_row": source_row, **fallback(" · ".join(filter(None, [item, dispute])), f"{dispute}\n{solution}")} if solution else None
     def column(words: list[str]) -> str | None:
-        return next((header for header in headers if any(word.lower() in str(header).lower() for word in words)), None)
+        return next((header for header in headers if any(re.sub(r"[\s_·-]+", "", word).lower() in re.sub(r"[\s_·-]+", "", str(header)).lower() for word in words)), None)
     title_key, content_key = column(["민원 제목", "제목", "title", "subject"]), column(["민원 내용", "민원내용", "신청원인", "원문", "내용", "complaint", "content", "질문"])
     content = str(row.get(content_key, "")).strip() if content_key else ""
     return {"source_row": source_row, **fallback(str(row.get(title_key, "")) if title_key else "", content)} if content else None
+
+
+TITLE_HEADER_WORDS = ["민원 제목", "민원제목", "제목", "title", "subject", "질문명", "문의제목", "사건명"]
+CONTENT_HEADER_WORDS = ["민원 내용", "민원내용", "신청원인", "신청내용", "신청사항", "문의내용", "상세내용", "원문", "내용", "complaint", "content", "질문"]
+
+
+def csv_schema_signature(headers: list[str]) -> str:
+    normalized = "\x1f".join(re.sub(r"\s+", "", header).lower() for header in headers)
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
+def csv_preview(path: Path, encoding: str, size: int = 5) -> tuple[list[str], list[dict[str, Any]]]:
+    with path.open("r", encoding=encoding, newline="") as source:
+        reader = csv.DictReader(source)
+        headers = [header.strip() for header in (reader.fieldnames or []) if header and header.strip()]
+        samples = [{key: str(value or "").strip()[:500] for key, value in row.items() if key} for _, row in zip(range(size), reader)]
+    return headers, samples
+
+
+def default_csv_mapping(headers: list[str]) -> dict[str, Any]:
+    def column(words: list[str]) -> str:
+        return next((header for header in headers if any(re.sub(r"[\s_·-]+", "", word).lower() in re.sub(r"[\s_·-]+", "", header).lower() for word in words)), "")
+    if "해결명(SOLUTION_CRTR_NAME)" in headers and "분쟁유형명(DISPUTE_TYPE_NAME)" in headers:
+        return {"title_column": "품목명(ITEM_NAME)", "content_columns": ["분쟁유형명(DISPUTE_TYPE_NAME)", "해결명(SOLUTION_CRTR_NAME)"], "response_column": "", "category_column": "", "confidence": 0.95, "reason": "공정거래위원회 상담 사례 헤더를 인식했습니다.", "source": "profile"}
+    title_column, content_column = column(TITLE_HEADER_WORDS), column(CONTENT_HEADER_WORDS)
+    return {"title_column": title_column, "content_columns": [content_column] if content_column else [], "response_column": "", "category_column": "", "confidence": 0.85 if content_column else 0.0, "reason": "기본 민원 헤더 후보를 인식했습니다." if content_column else "자동으로 민원 본문 열을 찾지 못했습니다.", "source": "heuristic"}
+
+
+def validate_csv_mapping(mapping: dict[str, Any], headers: list[str], samples: list[dict[str, Any]]) -> dict[str, Any]:
+    allowed_headers = set(headers)
+    title_column = str(mapping.get("title_column") or "").strip()
+    content_columns = [str(value).strip() for value in mapping.get("content_columns", []) if str(value).strip() in allowed_headers]
+    response_column = str(mapping.get("response_column") or "").strip()
+    category_column = str(mapping.get("category_column") or "").strip()
+    if title_column not in allowed_headers:
+        title_column = ""
+    if response_column not in allowed_headers:
+        response_column = ""
+    if category_column not in allowed_headers:
+        category_column = ""
+    content_columns = list(dict.fromkeys(content_columns))
+    nonempty = [" ".join(str(row.get(column, "")).strip() for column in content_columns).strip() for row in samples]
+    nonempty_ratio = sum(bool(value) for value in nonempty) / max(len(samples), 1)
+    average_length = sum(len(value) for value in nonempty) / max(len(nonempty), 1)
+    title_average = sum(len(str(row.get(title_column, "")).strip()) for row in samples) / max(len(samples), 1) if title_column else 0
+    supplied_confidence = max(0.0, min(1.0, float(mapping.get("confidence", 0))))
+    validation_score = min(1.0, nonempty_ratio * 0.55 + min(average_length / 160, 1.0) * 0.35 + (0.10 if not title_column or title_average <= 180 else 0.0))
+    return {"title_column": title_column, "content_columns": content_columns, "response_column": response_column, "category_column": category_column, "confidence": round(min(supplied_confidence, validation_score) if supplied_confidence else validation_score, 2), "reason": str(mapping.get("reason") or ""), "source": str(mapping.get("source") or "manual"), "valid": bool(content_columns and nonempty_ratio >= 0.6 and average_length >= 8)}
+
+
+def csv_row_to_record(row: dict[str, Any], source_row: int, mapping: dict[str, Any]) -> dict[str, Any] | None:
+    content_parts = [str(row.get(column, "")).strip() for column in mapping["content_columns"]]
+    content = "\n".join(part for part in content_parts if part)
+    if not content:
+        return None
+    title = str(row.get(mapping.get("title_column", ""), "")).strip()
+    return {"source_row": source_row, "title": title, "content": content, "source_response": str(row.get(mapping.get("response_column", ""), "")).strip() if mapping.get("response_column") else "", "source_category": str(row.get(mapping.get("category_column", ""), "")).strip() if mapping.get("category_column") else ""}
 
 
 def _cell_text(value: Any) -> str:
@@ -449,8 +516,7 @@ async def batch(body: BatchBody, actor: Annotated[dict, Depends(actor_from_auth)
 @app.get("/api/complaints/counts")
 def counts(actor: Annotated[dict, Depends(actor_from_auth)]):
     if actor["role"] == "admin":
-        categories, args = allowed(actor), (allowed(actor),)
-        clause = "category = ANY(%s)"
+        args, clause = (), "TRUE"
     else:
         args, clause = (actor["owner_id"],), "owner_user_id=%s"
     rows = fetch_all(f"SELECT COALESCE(category,'기타') category,COUNT(*)::int count FROM complaints WHERE deleted_at IS NULL AND {clause} GROUP BY category", args)
@@ -461,7 +527,7 @@ def counts(actor: Annotated[dict, Depends(actor_from_auth)]):
 @app.get("/api/complaints")
 def complaints(deleted: bool = False, category: str | None = None, limit: int = 100, offset: int = 0, actor: dict = Depends(actor_from_auth)):
     limit = max(1, min(limit, 100)); offset = max(offset, 0)
-    if actor["role"] == "admin": clause, scope = "category=ANY(%s)", [allowed(actor)]
+    if actor["role"] == "admin": clause, scope = "TRUE", []
     else: clause, scope = "owner_user_id=%s", [actor["owner_id"]]
     where = "deleted_at IS NOT NULL" if deleted else "deleted_at IS NULL"
     params: list[Any] = [*scope, category, category, limit, offset]
@@ -473,6 +539,10 @@ def complaints(deleted: bool = False, category: str | None = None, limit: int = 
         FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s)
         ORDER BY {'deleted_at' if deleted else 'created_at'} DESC LIMIT %s OFFSET %s"""
     rows = fetch_all(sql, params)
+    if actor["role"] == "admin":
+        manageable = set(allowed(actor))
+        for row in rows:
+            row["can_manage"] = row["category"] in manageable
     total = fetch_one(f"SELECT COUNT(*)::int count FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s)", [*scope, category, category])
     return {"complaints": rows, "total": total["count"]}
 
@@ -554,6 +624,20 @@ def permanent_all(body: PasswordBody, actor: Annotated[dict, Depends(actor_from_
     return {"permanently_deleted": count}
 
 
+@app.delete("/api/complaints/department/all")
+def permanent_department_all(actor: Annotated[dict, Depends(actor_from_auth)]):
+    """Testing-only soft delete for every active complaint in every category."""
+    # This route is deliberately restricted to department administrators.  It is
+    # a temporary test-reset tool and must be removed before production release.
+    require_department(actor)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE complaints SET deleted_at=NOW() WHERE deleted_at IS NULL RETURNING id")
+            count = len(cur.fetchall())
+        conn.commit()
+    return {"deleted": count, "scope": "all_categories"}
+
+
 @app.post("/api/cleanup/deleted")
 def cleanup(body: PasswordBody, actor: Annotated[dict, Depends(actor_from_auth)]):
     check_password(actor, body.password); clause, args = scoped_where(actor, 1)
@@ -592,71 +676,230 @@ def csv_rows(path: Path, encoding: str):
         yield from csv.DictReader(source)
 
 
-def process_csv_job(job_id: str, path: Path, source_file: str, stored_owner: str | None, encoding: str) -> None:
+async def analyze_csv_batch(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def rule_result(record: dict[str, Any]) -> dict[str, Any]:
+        return {**fallback(record["title"], record["content"]), "source_row": record["source_row"], "processing_mode": "rule"}
+
+    def should_use_llm(record: dict[str, Any], result: dict[str, Any]) -> bool:
+        if not LLM_IMPORT_ENABLED or result.get("needs_review"):
+            return False
+        # A sufficiently detailed complaint without any department signal is
+        # safely kept in the catch-all category.  Sending every such row to the
+        # LLM would make consumer-style CSV imports impractically slow.
+        if result.get("category") == "기타" and len(record["content"].strip()) >= CSV_RULE_OTHER_MIN_CONTENT_CHARS:
+            return False
+        return float(result.get("confidence") or 0) < CSV_LLM_CONFIDENCE_THRESHOLD
+
+    prepared = [(record, rule_result(record)) for record in records]
+    llm_candidates = [(record, result) for record, result in prepared if should_use_llm(record, result)]
+    if not llm_candidates:
+        return [result for _, result in prepared]
+    semaphore = asyncio.Semaphore(LLM_IMPORT_CONCURRENCY)
+
+    async def analyze_one(record: dict[str, Any], rule: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        async with semaphore:
+            result = await analyze(record["title"], record["content"])
+            # Bulk CSV imports do not retry a 60-second local model timeout.
+            # The rule result is retained when the LLM is unavailable.
+            return record["source_row"], ({**result, "source_row": record["source_row"]} if result.get("processing_mode") == "llm" else rule)
+
+    llm_results = dict(await asyncio.gather(*(analyze_one(record, rule) for record, rule in llm_candidates)))
+    return [llm_results.get(record["source_row"], rule) for record, rule in prepared]
+
+
+def persist_csv_batch(conn: psycopg.Connection, records: list[dict[str, Any]], source_file: str, stored_owner: str | None) -> tuple[int, int]:
+    saved = skipped = 0
+    for record in records:
+        vector = record.pop("_embedding", None)
+        if insert_complaint(conn, record, source_file, record["source_row"], stored_owner, vector):
+            saved += 1
+        else:
+            skipped += 1
+    return saved, skipped
+
+
+def update_import_progress(job_id: str, completed: int, *, heartbeat_only: bool = False) -> None:
+    with connection() as conn:
+        with conn.cursor() as cur:
+            if heartbeat_only:
+                cur.execute("UPDATE import_jobs SET heartbeat_at=NOW() WHERE id=%s", (job_id,))
+            else:
+                cur.execute("UPDATE import_jobs SET completed_rows=%s,heartbeat_at=NOW() WHERE id=%s", (completed, job_id))
+        conn.commit()
+
+
+def process_csv_job(job: dict[str, Any]) -> None:
+    """Run one queued CSV job from its last durable 500-row checkpoint.
+
+    The worker owns this function.  Progress is visible every small group, while
+    complaint inserts remain committed in MAX_BATCH_SIZE-sized transactions.
+    """
+    job_id = str(job["id"])
+    path = Path(job["storage_path"])
+    source_file = job["source_file"]
+    stored_owner = job["owner_user_id"]
+    encoding = job["encoding"]
+    mapping = job["column_mapping"]
+    checkpoint = int(job.get("checkpoint_rows") or 0)
     try:
-        with connection() as conn:
-            with conn.cursor() as cur: cur.execute("UPDATE import_jobs SET status='processing' WHERE id=%s", (job_id,))
-            conn.commit()
-        batch: list[dict[str, Any]] = []; failures: list[tuple[int, dict[str, Any], str]] = []; completed = saved = skipped = failed = 0
-        for number, row in enumerate(csv_rows(path, encoding), start=2):
-            completed += 1
-            try:
-                record = row_to_complaint(row, number)
-                if record: batch.append(record)
-                else: failures.append((number, row, "요약할 민원 내용 열을 찾지 못했습니다."))
-            except Exception as error: failures.append((number, row, str(error)))
-            if len(batch) + len(failures) >= MAX_BATCH_SIZE:
-                with connection() as conn:
-                    for record in batch:
-                        vector = asyncio.run(embedding(record))
-                        if insert_complaint(conn, record, source_file, record["source_row"], stored_owner, vector): saved += 1
-                        else: skipped += 1
-                    with conn.cursor() as cur:
-                        for row_number, raw, reason in failures: cur.execute("INSERT INTO import_failures(job_id,source_row,raw_data,reason) VALUES(%s,%s,%s,%s)", (job_id, row_number, json.dumps(raw, ensure_ascii=False), reason))
-                    failed += len(failures); conn.commit()
-                batch = []; failures = []
-                with connection() as conn:
-                    with conn.cursor() as cur: cur.execute("UPDATE import_jobs SET completed_rows=%s,saved_rows=%s,skipped_rows=%s,failed_rows=%s WHERE id=%s", (completed, saved, skipped, failed, job_id))
-                    conn.commit()
-        if batch or failures:
+        if not path.is_file():
+            raise FileNotFoundError("원본 CSV 파일을 찾지 못했습니다.")
+        batch: list[dict[str, Any]] = []
+        failures: list[tuple[int, dict[str, Any], str]] = []
+        completed = checkpoint
+        saved = int(job.get("saved_rows") or 0)
+        skipped = int(job.get("skipped_rows") or 0)
+        failed = int(job.get("failed_rows") or 0)
+        pending: list[tuple[int, dict[str, Any]]] = []
+
+        def flush_batch() -> None:
+            nonlocal batch, failures, saved, skipped, failed
+            if not batch and not failures:
+                return
             with connection() as conn:
-                for record in batch:
-                    vector = asyncio.run(embedding(record))
-                    if insert_complaint(conn, record, source_file, record["source_row"], stored_owner, vector): saved += 1
-                    else: skipped += 1
+                batch_saved, batch_skipped = persist_csv_batch(conn, batch, source_file, stored_owner)
+                saved += batch_saved
+                skipped += batch_skipped
                 with conn.cursor() as cur:
-                    for row_number, raw, reason in failures: cur.execute("INSERT INTO import_failures(job_id,source_row,raw_data,reason) VALUES(%s,%s,%s,%s)", (job_id, row_number, json.dumps(raw, ensure_ascii=False), reason))
-                failed += len(failures)
-                with conn.cursor() as cur: cur.execute("UPDATE import_jobs SET status='completed',completed_rows=%s,saved_rows=%s,skipped_rows=%s,failed_rows=%s,completed_at=NOW(),last_error=NULL WHERE id=%s", (completed, saved, skipped, failed, job_id))
+                    for row_number, raw, reason in failures:
+                        cur.execute("INSERT INTO import_failures(job_id,source_row,raw_data,reason) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING", (job_id, row_number, json.dumps(raw, ensure_ascii=False), reason))
+                    failed += len(failures)
+                    cur.execute("UPDATE import_jobs SET checkpoint_rows=%s,completed_rows=%s,saved_rows=%s,skipped_rows=%s,failed_rows=%s,heartbeat_at=NOW() WHERE id=%s", (completed, completed, saved, skipped, failed, job_id))
                 conn.commit()
+            batch = []
+            failures = []
+
+        def process_pending() -> None:
+            nonlocal pending, batch, failures, completed
+            if not pending:
+                return
+            for number, row in pending:
+                try:
+                    record = csv_row_to_record(row, number, mapping)
+                    if record:
+                        # Keep the heartbeat alive for a slow local LLM request.
+                        # Progress is intentionally displayed only every configured
+                        # group, but a live worker must not look abandoned mid-group.
+                        analyzed = asyncio.run(analyze_csv_batch([record]))[0]
+                        analyzed["_embedding"] = asyncio.run(embedding(analyzed))
+                        batch.append(analyzed)
+                    else:
+                        failures.append((number, row, "요약할 민원 내용 열을 찾지 못했습니다."))
+                except Exception as error:
+                    failures.append((number, row, str(error)))
+                completed += 1
+                if completed % IMPORT_PROGRESS_ROWS == 0:
+                    update_import_progress(job_id, completed)
+                else:
+                    update_import_progress(job_id, completed, heartbeat_only=True)
+            pending = []
+            if len(batch) + len(failures) >= MAX_BATCH_SIZE:
+                flush_batch()
+
+        for number, row in enumerate(csv_rows(path, encoding), start=2):
+            if number <= checkpoint + 1:
+                continue
+            pending.append((number, row))
+            if len(pending) >= IMPORT_PROGRESS_ROWS:
+                process_pending()
+        process_pending()
+        flush_batch()
+        with connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE import_jobs SET status='completed',checkpoint_rows=%s,completed_rows=%s,saved_rows=%s,skipped_rows=%s,failed_rows=%s,completed_at=NOW(),heartbeat_at=NOW(),last_error=NULL WHERE id=%s", (completed, completed, saved, skipped, failed, job_id))
+            conn.commit()
     except Exception as error:
         with connection() as conn:
-            with conn.cursor() as cur: cur.execute("UPDATE import_jobs SET status='queued',retry_count=retry_count+1,last_error=%s WHERE id=%s", (str(error), job_id))
+            with conn.cursor() as cur: cur.execute("UPDATE import_jobs SET status='failed',retry_count=retry_count+1,last_error=%s,heartbeat_at=NOW() WHERE id=%s", (str(error), job_id))
             conn.commit()
 
 
 @app.post("/api/imports", status_code=202)
-async def create_import(background: BackgroundTasks, file: UploadFile = File(...), actor: dict = Depends(actor_from_auth)):
+async def create_import(file: UploadFile = File(...), actor: dict = Depends(actor_from_auth)):
     require_admin(actor)
     path, suffix = await save_upload(file, CSV_MAX_UPLOAD_BYTES)
     if suffix != ".csv": path.unlink(missing_ok=True); raise HTTPException(400, "일괄 처리는 CSV 파일만 지원합니다.")
     encoding = csv_encoding(path)
     total = sum(1 for _ in csv_rows(path, encoding))
+    headers, samples = csv_preview(path, encoding)
+    if not headers:
+        path.unlink(missing_ok=True); raise HTTPException(422, "CSV 헤더를 찾지 못했습니다.")
+    signature = csv_schema_signature(headers)
+    stored_mapping = fetch_one("SELECT profile_name,column_mapping,confidence FROM csv_schema_mappings WHERE schema_signature=%s", (signature,))
+    if stored_mapping:
+        mapping = {**stored_mapping["column_mapping"], "confidence": float(stored_mapping["confidence"]), "source": "saved", "reason": "저장된 CSV 헤더 매핑을 적용했습니다."}
+    else:
+        llm_mapping = validate_csv_mapping(await infer_csv_mapping(headers, samples), headers, samples)
+        heuristic_mapping = validate_csv_mapping(default_csv_mapping(headers), headers, samples)
+        mapping = llm_mapping if llm_mapping["valid"] and llm_mapping["confidence"] >= 0.65 else heuristic_mapping
+    mapping = validate_csv_mapping(mapping, headers, samples)
+    needs_mapping = not mapping["valid"] or mapping["confidence"] < 0.65
+    status = "awaiting_mapping" if needs_mapping else "queued"
     job_id = uuid4(); stored_owner = owner_id(actor)
     with connection() as conn:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO source_files(id,original_name,storage_path,mime_type,size_bytes) VALUES(%s,%s,%s,%s,%s)", (job_id, file.filename, str(path), file.content_type, path.stat().st_size))
-            cur.execute("INSERT INTO import_jobs(id,source_file,status,total_rows,storage_path,encoding,owner_user_id) VALUES(%s,%s,'queued',%s,%s,%s,%s)", (job_id, file.filename, total, str(path), encoding, stored_owner))
+            cur.execute("INSERT INTO import_jobs(id,source_file,status,total_rows,storage_path,encoding,column_mapping,schema_signature,owner_user_id) VALUES(%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)", (job_id, file.filename, status, total, str(path), encoding, json.dumps(mapping, ensure_ascii=False), signature, stored_owner))
+            if not needs_mapping and not stored_mapping:
+                cur.execute("INSERT INTO csv_schema_mappings(schema_signature,column_mapping,confidence,created_by_user_id) VALUES(%s,%s::jsonb,%s,%s) ON CONFLICT(schema_signature) DO NOTHING", (signature, json.dumps(mapping, ensure_ascii=False), mapping["confidence"], actor["sub"]))
         conn.commit()
-    background.add_task(process_csv_job, job_id, path, file.filename or "upload.csv", stored_owner, encoding)
-    return {"job_id": job_id, "status": "queued", "total_rows": total, "batch_size": MAX_BATCH_SIZE}
+    return {"job_id": job_id, "status": status, "total_rows": total, "batch_size": MAX_BATCH_SIZE, "needs_mapping": needs_mapping, "headers": headers, "samples": samples, "mapping": mapping}
+
+
+@app.post("/api/imports/{job_id}/mapping", status_code=202)
+def confirm_import_mapping(job_id: str, body: CsvMappingBody, actor: Annotated[dict, Depends(actor_from_auth)]):
+    require_admin(actor)
+    job = fetch_one("SELECT id,source_file,status,storage_path,encoding,owner_user_id,schema_signature FROM import_jobs WHERE id=%s", (job_id,))
+    if not job or job["status"] != "awaiting_mapping":
+        raise HTTPException(404, "헤더 매핑 대기 중인 작업을 찾지 못했습니다.")
+    path = Path(job["storage_path"])
+    if not path.is_file():
+        raise HTTPException(404, "원본 CSV 파일을 찾지 못했습니다.")
+    headers, samples = csv_preview(path, job["encoding"])
+    mapping = validate_csv_mapping({**body.model_dump(), "confidence": 1.0, "source": "manual", "reason": "관리자가 CSV 열 매핑을 확인했습니다."}, headers, samples)
+    if not mapping["valid"]:
+        raise HTTPException(422, "본문 열을 하나 이상 선택하고, 예시 행에 충분한 민원 내용이 있는지 확인해 주세요.")
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE import_jobs SET status='queued',column_mapping=%s::jsonb WHERE id=%s", (json.dumps(mapping, ensure_ascii=False), job_id))
+            if body.save_mapping:
+                cur.execute("""INSERT INTO csv_schema_mappings(schema_signature,profile_name,column_mapping,confidence,created_by_user_id)
+                    VALUES(%s,%s,%s::jsonb,%s,%s)
+                    ON CONFLICT(schema_signature) DO UPDATE SET profile_name=EXCLUDED.profile_name,column_mapping=EXCLUDED.column_mapping,confidence=EXCLUDED.confidence,created_by_user_id=EXCLUDED.created_by_user_id,updated_at=NOW()""", (job["schema_signature"], body.profile_name.strip() or None, json.dumps(mapping, ensure_ascii=False), mapping["confidence"], actor["sub"]))
+        conn.commit()
+    return {"job_id": job_id, "status": "queued", "mapping": mapping}
 
 
 @app.get("/api/imports/{job_id}")
 def import_status(job_id: str, actor: Annotated[dict, Depends(actor_from_auth)]):
     clause, params = ("", [job_id]) if actor["role"] == "admin" else (" AND owner_user_id=%s", [job_id, actor["owner_id"]])
-    row = fetch_one(f"SELECT id,source_file,status,total_rows,completed_rows,saved_rows,skipped_rows,failed_rows,retry_count,last_error,created_at,completed_at FROM import_jobs WHERE id=%s{clause}", params)
+    row = fetch_one(f"SELECT id,source_file,status,total_rows,completed_rows,checkpoint_rows,saved_rows,skipped_rows,failed_rows,retry_count,last_error,column_mapping,created_at,started_at,heartbeat_at,completed_at FROM import_jobs WHERE id=%s{clause}", params)
     if not row: raise HTTPException(404, "처리 작업을 찾을 수 없습니다.")
+    return row
+
+
+@app.get("/api/imports")
+def recent_imports(actor: Annotated[dict, Depends(actor_from_auth)], limit: int = 10):
+    require_admin(actor)
+    limit = max(1, min(limit, 30))
+    jobs = fetch_all("""SELECT id,source_file,status,total_rows,completed_rows,checkpoint_rows,saved_rows,skipped_rows,failed_rows,retry_count,last_error,created_at,started_at,heartbeat_at,completed_at
+        FROM import_jobs ORDER BY created_at DESC LIMIT %s""", (limit,))
+    return {"jobs": jobs}
+
+
+@app.post("/api/imports/{job_id}/retry", status_code=202)
+def retry_import(job_id: str, actor: Annotated[dict, Depends(actor_from_auth)]):
+    require_admin(actor)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""UPDATE import_jobs
+                SET status='queued', completed_rows=checkpoint_rows, heartbeat_at=NULL, worker_id=NULL, last_error=NULL, retry_count=retry_count+1
+                WHERE id=%s AND status='failed'
+                RETURNING id,status,total_rows,completed_rows,checkpoint_rows,saved_rows,skipped_rows,failed_rows,retry_count,last_error""", (job_id,))
+            row = cur.fetchone()
+        conn.commit()
+    if not row:
+        raise HTTPException(404, "재처리할 실패 작업을 찾지 못했습니다.")
     return row
 
 

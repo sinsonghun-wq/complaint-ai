@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS source_files (
 CREATE TABLE IF NOT EXISTS import_jobs (
   id UUID PRIMARY KEY,
   source_file TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('queued', 'processing', 'completed', 'failed')),
+  status TEXT NOT NULL CHECK (status IN ('awaiting_mapping', 'queued', 'processing', 'completed', 'failed')),
   total_rows INTEGER NOT NULL DEFAULT 0,
   completed_rows INTEGER NOT NULL DEFAULT 0,
   saved_rows INTEGER NOT NULL DEFAULT 0,
@@ -61,11 +61,28 @@ CREATE TABLE IF NOT EXISTS import_jobs (
   failed_rows INTEGER NOT NULL DEFAULT 0,
   storage_path TEXT,
   encoding TEXT,
+  column_mapping JSONB NOT NULL DEFAULT '{}'::jsonb,
+  schema_signature CHAR(64),
   retry_count INTEGER NOT NULL DEFAULT 0,
   last_error TEXT,
+  checkpoint_rows INTEGER NOT NULL DEFAULT 0,
+  started_at TIMESTAMPTZ,
+  heartbeat_at TIMESTAMPTZ,
+  worker_id TEXT,
   owner_user_id UUID REFERENCES app_users(owner_id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   completed_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS csv_schema_mappings (
+  id BIGSERIAL PRIMARY KEY,
+  schema_signature CHAR(64) NOT NULL UNIQUE,
+  profile_name TEXT,
+  column_mapping JSONB NOT NULL,
+  confidence NUMERIC(3,2) NOT NULL DEFAULT 0,
+  created_by_user_id UUID REFERENCES app_users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS import_failures (
@@ -102,6 +119,14 @@ ALTER TABLE complaints ADD COLUMN IF NOT EXISTS owner_user_id UUID;
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS complaint_status TEXT NOT NULL DEFAULT '접수';
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS status_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS column_mapping JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS schema_signature CHAR(64);
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS checkpoint_rows INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS worker_id TEXT;
+ALTER TABLE import_jobs DROP CONSTRAINT IF EXISTS import_jobs_status_check;
+ALTER TABLE import_jobs ADD CONSTRAINT import_jobs_status_check CHECK (status IN ('awaiting_mapping', 'queued', 'processing', 'completed', 'failed'));
 ALTER TABLE complaint_responses ADD COLUMN IF NOT EXISTS response_state TEXT NOT NULL DEFAULT 'sent';
 ALTER TABLE complaint_responses ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
 
@@ -112,7 +137,9 @@ CREATE INDEX IF NOT EXISTS complaints_deleted_at_idx ON complaints(deleted_at);
 CREATE INDEX IF NOT EXISTS complaints_content_fingerprint_idx ON complaints(content_fingerprint);
 CREATE INDEX IF NOT EXISTS complaints_embedding_hnsw_idx ON complaints USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS import_jobs_owner_idx ON import_jobs(owner_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS import_jobs_queue_idx ON import_jobs(status, created_at) WHERE status IN ('queued', 'processing');
 CREATE INDEX IF NOT EXISTS import_failures_job_idx ON import_failures(job_id, source_row);
+CREATE INDEX IF NOT EXISTS csv_schema_mappings_signature_idx ON csv_schema_mappings(schema_signature);
 CREATE INDEX IF NOT EXISTS complaint_responses_complaint_idx ON complaint_responses(complaint_id, created_at);
 
 -- local 개발·테스트 전용 초기 계정. 운영 환경에서는 반드시 삭제하거나 별도 비밀번호로 교체한다.

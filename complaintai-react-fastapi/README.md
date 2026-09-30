@@ -54,11 +54,16 @@ npm install
 npm run build
 cd ..
 
-# FastAPI가 frontend/dist를 제공한다.
+# 터미널 1: FastAPI가 frontend/dist를 제공한다.
 uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# 터미널 2: 대용량 CSV 작업 전용 워커를 별도로 실행한다.
+.\scripts\run_import_worker.ps1
 ```
 
 브라우저에서 `http://127.0.0.1:8000`을 연다. 개발 중에는 `frontend`에서 `npm run dev`를 별도로 실행할 수 있다.
+
+CSV 작업은 PostgreSQL 작업 큐에 등록되고 별도 워커가 처리한다. 웹 서버를 재시작해도 워커가 계속 실행 중이면 작업은 유지된다. 워커가 중단돼 heartbeat가 5분 이상 갱신되지 않은 작업은 `실패`로 전환되며, 업로드 화면의 `재처리` 버튼으로 마지막 500건 저장 지점부터 다시 시작할 수 있다.
 
 ## 문서 추출 방식
 
