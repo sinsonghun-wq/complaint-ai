@@ -63,7 +63,8 @@ def actor_from_auth(authorization: str | None = Header(default=None)) -> dict[st
     actor = read_token(authorization)
     if not actor:
         raise HTTPException(401, "로그인이 필요합니다.")
-    return actor
+    user = current_account(actor)
+    return {**actor, "owner_id": str(user["owner_id"]), "role": user["account_role"], "department": user.get("department")}
 
 
 def current_account(actor: dict[str, Any]) -> dict[str, Any]:

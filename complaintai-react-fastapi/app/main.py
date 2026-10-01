@@ -77,6 +77,10 @@ class TransferBody(BaseModel):
     category: str
 
 
+class CancelBody(BaseModel):
+    reason: str = Field(default="", max_length=2000)
+
+
 class CsvMappingBody(BaseModel):
     profile_name: str = ""
     title_column: str = ""
@@ -419,7 +423,7 @@ def insert_complaint(conn: psycopg.Connection, record: dict[str, Any], source_fi
     with conn.cursor() as cur:
         cur.execute("""INSERT INTO complaints (title,content,summary,category,source_file,source_row,content_fingerprint,processing_mode,llm_model,embedding_model,prompt_version,analysis_metadata,embedding,owner_user_id)
             SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector,%s
-            WHERE NOT EXISTS (SELECT 1 FROM complaints WHERE content_fingerprint=%s AND deleted_at IS NULL AND owner_user_id IS NOT DISTINCT FROM %s) RETURNING id""",
+            WHERE NOT EXISTS (SELECT 1 FROM complaints WHERE content_fingerprint=%s AND deleted_at IS NULL AND complaint_status<>'취소' AND owner_user_id IS NOT DISTINCT FROM %s) RETURNING id""",
             (record["title"], record["content"], record["summary"], record["category"], source_file, source_row, fingerprint(record["content"]), record.get("processing_mode", "fallback"), record.get("model"), "Qwen/Qwen3-Embedding-4B" if vector else None, record.get("prompt_version"), metadata, vector_literal(vector), stored_owner, fingerprint(record["content"]), stored_owner))
         return cur.fetchone() is not None
 
@@ -448,6 +452,11 @@ def startup() -> None:
             cur.execute("ALTER TABLE complaint_responses ADD COLUMN IF NOT EXISTS response_state TEXT NOT NULL DEFAULT 'sent'")
             cur.execute("ALTER TABLE complaint_responses ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ")
             cur.execute("UPDATE complaint_responses SET sent_at=created_at WHERE response_state='sent' AND sent_at IS NULL")
+            cur.execute("ALTER TABLE complaints ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ")
+            cur.execute("ALTER TABLE complaints ADD COLUMN IF NOT EXISTS cancelled_by_role TEXT")
+            cur.execute("ALTER TABLE complaints ADD COLUMN IF NOT EXISTS cancellation_reason TEXT")
+            cur.execute("ALTER TABLE complaints ADD COLUMN IF NOT EXISTS parent_complaint_id BIGINT REFERENCES complaints(id) ON DELETE SET NULL")
+            cur.execute("ALTER TABLE complaints ADD COLUMN IF NOT EXISTS previous_context JSONB")
         conn.commit()
 
 
@@ -500,7 +509,7 @@ async def analyze_endpoint(body: ComplaintBody, actor: Annotated[dict, Depends(a
     similar = []
     vector = await embedding(record)
     if vector:
-        similar = fetch_all("SELECT id,title,summary,category,1-(embedding <=> %s::vector) AS similarity FROM complaints WHERE deleted_at IS NULL AND embedding IS NOT NULL ORDER BY embedding <=> %s::vector LIMIT 5", (vector_literal(vector), vector_literal(vector)))
+        similar = fetch_all("SELECT id,title,summary,category,1-(embedding <=> %s::vector) AS similarity FROM complaints WHERE deleted_at IS NULL AND complaint_status<>'취소' AND owner_user_id=%s AND embedding IS NOT NULL ORDER BY embedding <=> %s::vector LIMIT 5", (vector_literal(vector), actor["owner_id"], vector_literal(vector)))
     return {"analysis": record, "similar": similar, "ai": {"llm_model": "qwen2.5:7b-instruct", "embedding_model": "Qwen/Qwen3-Embedding-4B", "vector_dimension": 1536}}
 
 
@@ -518,7 +527,7 @@ def counts(actor: Annotated[dict, Depends(actor_from_auth)]):
     if actor["role"] == "admin":
         args, clause = (), "TRUE"
     else:
-        args, clause = (actor["owner_id"],), "owner_user_id=%s"
+        args, clause = (actor["owner_id"],), "owner_user_id=%s AND NOT (complaint_status='취소' AND cancelled_by_role IS NOT DISTINCT FROM 'user')"
     rows = fetch_all(f"SELECT COALESCE(category,'기타') category,COUNT(*)::int count FROM complaints WHERE deleted_at IS NULL AND {clause} GROUP BY category", args)
     deleted = fetch_one(f"SELECT COUNT(*)::int count FROM complaints WHERE deleted_at IS NOT NULL AND {clause}", args)
     return {"categories": rows, "deleted": deleted["count"]}
@@ -527,12 +536,15 @@ def counts(actor: Annotated[dict, Depends(actor_from_auth)]):
 @app.get("/api/complaints")
 def complaints(deleted: bool = False, category: str | None = None, limit: int = 100, offset: int = 0, actor: dict = Depends(actor_from_auth)):
     limit = max(1, min(limit, 100)); offset = max(offset, 0)
+    category = category or None
     if actor["role"] == "admin": clause, scope = "TRUE", []
     else: clause, scope = "owner_user_id=%s", [actor["owner_id"]]
     where = "deleted_at IS NOT NULL" if deleted else "deleted_at IS NULL"
+    if actor["role"] == "user":
+        where += " AND NOT (complaint_status='취소' AND cancelled_by_role IS NOT DISTINCT FROM 'user')"
     params: list[Any] = [*scope, category, category, limit, offset]
     response_filter = "" if actor["role"] == "admin" else " AND r.response_state='sent'"
-    sql = f"""SELECT id,title,content,summary,category,complaint_status,source_file,source_row,processing_mode,llm_model,embedding_model,created_at,deleted_at,
+    sql = f"""SELECT id,title,content,summary,category,complaint_status,source_file,source_row,processing_mode,llm_model,embedding_model,created_at,deleted_at,cancelled_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
         (owner_user_id IS NOT NULL) AS submitted_by_user,
         COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response,
         COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response_state
@@ -543,6 +555,7 @@ def complaints(deleted: bool = False, category: str | None = None, limit: int = 
         manageable = set(allowed(actor))
         for row in rows:
             row["can_manage"] = row["category"] in manageable
+            hide_cancelled_content(row)
     total = fetch_one(f"SELECT COUNT(*)::int count FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s)", [*scope, category, category])
     return {"complaints": rows, "total": total["count"]}
 
@@ -552,20 +565,80 @@ def scoped_where(actor: dict, parameter: int = 2) -> tuple[str, list[Any]]:
     return " AND owner_user_id=%s", [actor["owner_id"]]
 
 
+def hide_cancelled_content(row: dict) -> dict:
+    if row.get("complaint_status") == "취소":
+        row.update(title="취소된 민원", content="", summary="", latest_response="", latest_response_state="", previous_context=None)
+    return row
+
+
+def locked_complaint(cur, complaint_id: int, actor: dict) -> dict:
+    clause, args = scoped_where(actor)
+    cur.execute(f"SELECT * FROM complaints WHERE id=%s AND deleted_at IS NULL{clause} FOR UPDATE", (complaint_id, *args))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "민원을 찾을 수 없거나 해당 민원에 접근할 수 없습니다.")
+    return row
+
+
+def require_open_complaint(row: dict) -> None:
+    if row["complaint_status"] not in {"접수", "진행중"}:
+        raise HTTPException(409, "해당 민원은 삭제(취소)되었습니다." if row["complaint_status"] == "취소" else "답변이 완료된 민원은 변경할 수 없습니다.")
+
+
+@app.get("/api/complaints/{complaint_id}")
+def complaint_detail(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)]):
+    # 목록과 같은 접근 범위; 관리자는 다른 부서 원문을 읽을 수 있다.
+    clause, args = ("", []) if actor["role"] == "admin" else (" AND owner_user_id=%s", [actor["owner_id"]])
+    response_filter = "" if actor["role"] == "admin" else " AND r.response_state='sent'"
+    row = fetch_one(f"""SELECT id,title,content,summary,category,complaint_status,created_at,deleted_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
+        (owner_user_id IS NOT NULL) submitted_by_user,
+        COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1),'') latest_response,
+        COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1),'') latest_response_state
+        FROM complaints WHERE id=%s{clause}""", (complaint_id, *args))
+    if not row:
+        raise HTTPException(404, "민원을 찾을 수 없습니다.")
+    row["can_manage"] = actor["role"] == "admin" and row["category"] in allowed(actor)
+    if actor["role"] == "admin" or row.get("cancelled_by_role") == "user":
+        hide_cancelled_content(row)
+    return {"complaint": row}
+
+
+@app.post("/api/department/complaints/{complaint_id}/start")
+def start_complaint(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)]):
+    require_department(actor)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            row = locked_complaint(cur, complaint_id, actor)
+            if row["complaint_status"] == "취소":
+                raise HTTPException(409, "해당 민원은 삭제(취소)되었습니다.")
+            if row["complaint_status"] == "접수":
+                cur.execute("UPDATE complaints SET complaint_status='진행중',status_updated_at=NOW() WHERE id=%s", (complaint_id,))
+    return complaint_detail(complaint_id, actor)
+
+
 @app.patch("/api/complaints/{complaint_id}")
 async def update_own_complaint(complaint_id: int, body: UpdateComplaintBody, actor: Annotated[dict, Depends(actor_from_auth)]):
     require_user(actor)
     title, content = body.title.strip(), body.content.strip()
     if not content:
         raise HTTPException(400, "민원 내용을 입력해 주세요.")
+    original = fetch_one("SELECT complaint_status FROM complaints WHERE id=%s AND owner_user_id=%s AND deleted_at IS NULL", (complaint_id, actor["owner_id"]))
+    if not original:
+        raise HTTPException(404, "본인 민원을 찾을 수 없습니다.")
+    if original["complaint_status"] != "접수":
+        raise HTTPException(409, "접수 대기 상태의 민원만 수정할 수 있습니다.")
     record = await analyze(title, content)
+    vector = await embedding(record)
     metadata = json.dumps({key: record.get(key) for key in ["key_points", "urgency", "needs_review", "review_reason", "reason", "keywords"]}, ensure_ascii=False)
     with connection() as conn:
         with conn.cursor() as cur:
+            original = locked_complaint(cur, complaint_id, actor)
+            if original["complaint_status"] != "접수":
+                raise HTTPException(409, "접수 대기 상태의 민원만 수정할 수 있습니다.")
             cur.execute("""UPDATE complaints SET title=%s,content=%s,summary=%s,category=%s,content_fingerprint=%s,
-                processing_mode=%s,llm_model=%s,prompt_version=%s,analysis_metadata=%s::jsonb,complaint_status='접수',status_updated_at=NOW()
+                processing_mode=%s,llm_model=%s,prompt_version=%s,analysis_metadata=%s::jsonb,embedding=%s::vector,embedding_model=%s,complaint_status='접수',status_updated_at=NOW()
                 WHERE id=%s AND owner_user_id=%s AND deleted_at IS NULL RETURNING id,title,summary,category,complaint_status""",
-                (record["title"], record["content"], record["summary"], record["category"], fingerprint(record["content"]), record.get("processing_mode", "fallback"), record.get("model"), record.get("prompt_version"), metadata, complaint_id, actor["owner_id"]))
+                (record["title"], record["content"], record["summary"], record["category"], fingerprint(record["content"]), record.get("processing_mode", "fallback"), record.get("model"), record.get("prompt_version"), metadata, vector_literal(vector), "Qwen/Qwen3-Embedding-4B" if vector else None, complaint_id, actor["owner_id"]))
             result = cur.fetchone()
         conn.commit()
     if not result:
@@ -574,25 +647,59 @@ async def update_own_complaint(complaint_id: int, body: UpdateComplaintBody, act
 
 
 @app.delete("/api/complaints/{complaint_id}")
-def soft_delete(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)]):
-    clause, args = scoped_where(actor)
+def soft_delete(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)], body: CancelBody | None = None):
+    reason = (body.reason if body else "").strip()
+    if actor["role"] == "admin" and not reason:
+        raise HTTPException(400, "민원을 취소하는 이유를 입력해 주세요.")
     with connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(f"UPDATE complaints SET deleted_at=NOW() WHERE id=%s AND deleted_at IS NULL{clause} RETURNING id", (complaint_id, *args)); moved = cur.fetchone()
-            cur.execute(f"SELECT COUNT(*)::int count FROM complaints WHERE deleted_at IS NOT NULL{clause}", args); count = cur.fetchone()["count"]
+            row = locked_complaint(cur, complaint_id, actor)
+            require_open_complaint(row)
+            cur.execute("UPDATE complaints SET complaint_status='취소',cancelled_at=NOW(),cancelled_by_role=%s,cancellation_reason=%s,status_updated_at=NOW() WHERE id=%s", (actor["role"], reason or "민원인이 해당 민원을 취소했습니다.", complaint_id))
+            cur.execute("DELETE FROM complaint_responses WHERE complaint_id=%s AND response_state='draft'", (complaint_id,))
         conn.commit()
-    return {"deleted": int(bool(moved)), "cleanup_required": count >= 3000}
+    return {"deleted": 1, "complaint_status": "취소", "message": "민원이 취소되었습니다." if actor["role"] == "user" else "민원이 삭제되었습니다."}
+
+
+@app.post("/api/complaints/{complaint_id}/follow-up", status_code=201)
+async def follow_up(complaint_id: int, body: ComplaintBody, actor: Annotated[dict, Depends(actor_from_auth)]):
+    require_user(actor)
+    if not body.content.strip():
+        raise HTTPException(400, "새 민원 내용을 입력해 주세요.")
+    parent = fetch_one("SELECT id FROM complaints WHERE id=%s AND owner_user_id=%s AND complaint_status='완료' AND deleted_at IS NULL", (complaint_id, actor["owner_id"]))
+    if not parent:
+        raise HTTPException(409, "답변이 완료된 본인 민원에만 재민원을 접수할 수 있습니다.")
+    record = await analyze(body.title, body.content)
+    vector = await embedding(record)
+    with connection() as conn:
+        with conn.cursor() as cur:
+            parent = locked_complaint(cur, complaint_id, actor)
+            if parent["complaint_status"] != "완료":
+                raise HTTPException(409, "답변이 완료된 본인 민원에만 재민원을 접수할 수 있습니다.")
+            cur.execute("SELECT content FROM complaint_responses WHERE complaint_id=%s AND response_state='sent' ORDER BY sent_at DESC LIMIT 1", (complaint_id,))
+            answer = cur.fetchone()
+            if not answer:
+                raise HTTPException(409, "전송 완료된 답변이 없습니다.")
+            context = {"complaint_id": complaint_id, "title": parent["title"], "content": parent["content"], "response": answer["content"], "previous_context": parent.get("previous_context")}
+            cur.execute("""INSERT INTO complaints(title,content,summary,category,owner_user_id,complaint_status,parent_complaint_id,previous_context,content_fingerprint,processing_mode,llm_model,embedding,embedding_model)
+                VALUES(%s,%s,%s,%s,%s,'접수',%s,%s::jsonb,%s,%s,%s,%s::vector,%s) RETURNING id""", (record["title"], record["content"], record["summary"], parent["category"], actor["owner_id"], complaint_id, json.dumps(context, ensure_ascii=False), fingerprint(record["content"]), record.get("processing_mode", "fallback"), record.get("model"), vector_literal(vector), "Qwen/Qwen3-Embedding-4B" if vector else None))
+            result = cur.fetchone()
+    return {"complaint": result, "message": "이전 민원과 답변을 포함한 재민원이 접수되었습니다."}
 
 
 @app.delete("/api/complaints/category/{category}")
-def delete_category(category: str, actor: Annotated[dict, Depends(actor_from_auth)]):
+def delete_category(category: str, body: CancelBody, actor: Annotated[dict, Depends(actor_from_auth)]):
     if category not in CATEGORIES: raise HTTPException(400, "허용되지 않은 카테고리입니다.")
     if category not in require_department(actor):
         raise HTTPException(403, "담당 부서의 민원만 전체 삭제할 수 있습니다.")
     clause, args = scoped_where(actor)
+    if not body.reason.strip():
+        raise HTTPException(400, "민원을 취소하는 이유를 입력해 주세요.")
     with connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(f"UPDATE complaints SET deleted_at=NOW() WHERE category=%s AND deleted_at IS NULL{clause} RETURNING id", (category, *args)); moved = len(cur.fetchall())
+            cur.execute(f"UPDATE complaints SET complaint_status='취소',cancelled_at=NOW(),cancelled_by_role='admin',cancellation_reason=%s,status_updated_at=NOW() WHERE category=%s AND deleted_at IS NULL AND complaint_status IN ('접수','진행중'){clause} RETURNING id", (body.reason.strip(), category, *args))
+            ids = [row["id"] for row in cur.fetchall()]; moved = len(ids)
+            cur.execute("DELETE FROM complaint_responses WHERE complaint_id=ANY(%s) AND response_state='draft'", (ids,))
         conn.commit()
     return {"deleted": moved}
 
@@ -601,7 +708,7 @@ def delete_category(category: str, actor: Annotated[dict, Depends(actor_from_aut
 def restore(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)]):
     clause, args = scoped_where(actor)
     with connection() as conn:
-        with conn.cursor() as cur: cur.execute(f"UPDATE complaints SET deleted_at=NULL WHERE id=%s AND deleted_at IS NOT NULL{clause} RETURNING id", (complaint_id, *args)); row = cur.fetchone()
+        with conn.cursor() as cur: cur.execute(f"UPDATE complaints SET deleted_at=NULL WHERE id=%s AND deleted_at IS NOT NULL AND cancelled_at IS NULL{clause} RETURNING id", (complaint_id, *args)); row = cur.fetchone()
         conn.commit()
     return {"restored": int(bool(row))}
 
@@ -610,7 +717,7 @@ def restore(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)])
 def permanent(complaint_id: int, body: PasswordBody, actor: Annotated[dict, Depends(actor_from_auth)]):
     check_password(actor, body.password); clause, args = scoped_where(actor)
     with connection() as conn:
-        with conn.cursor() as cur: cur.execute(f"DELETE FROM complaints WHERE id=%s AND deleted_at IS NOT NULL{clause} RETURNING id", (complaint_id, *args)); row = cur.fetchone()
+        with conn.cursor() as cur: cur.execute(f"DELETE FROM complaints WHERE id=%s AND deleted_at IS NOT NULL AND complaint_status NOT IN ('완료','취소'){clause} RETURNING id", (complaint_id, *args)); row = cur.fetchone()
         conn.commit()
     return {"permanently_deleted": int(bool(row))}
 
@@ -619,21 +726,23 @@ def permanent(complaint_id: int, body: PasswordBody, actor: Annotated[dict, Depe
 def permanent_all(body: PasswordBody, actor: Annotated[dict, Depends(actor_from_auth)]):
     check_password(actor, body.password); clause, args = scoped_where(actor, 1)
     with connection() as conn:
-        with conn.cursor() as cur: cur.execute(f"DELETE FROM complaints WHERE deleted_at IS NOT NULL{clause} RETURNING id", args); count = len(cur.fetchall())
+        with conn.cursor() as cur: cur.execute(f"DELETE FROM complaints WHERE deleted_at IS NOT NULL AND complaint_status NOT IN ('완료','취소'){clause} RETURNING id", args); count = len(cur.fetchall())
         conn.commit()
     return {"permanently_deleted": count}
 
 
 @app.delete("/api/complaints/department/all")
 def permanent_department_all(actor: Annotated[dict, Depends(actor_from_auth)]):
-    """Testing-only soft delete for every active complaint in every category."""
+    """Testing-only cancellation of open complaints; terminal states remain immutable."""
     # This route is deliberately restricted to department administrators.  It is
     # a temporary test-reset tool and must be removed before production release.
     require_department(actor)
     with connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("UPDATE complaints SET deleted_at=NOW() WHERE deleted_at IS NULL RETURNING id")
-            count = len(cur.fetchall())
+            cur.execute("UPDATE complaints SET complaint_status='취소',cancelled_at=NOW(),cancelled_by_role='admin',cancellation_reason='테스트 데이터 전체 정리',status_updated_at=NOW() WHERE deleted_at IS NULL AND complaint_status IN ('접수','진행중') RETURNING id")
+            ids = [row["id"] for row in cur.fetchall()]
+            count = len(ids)
+            cur.execute("DELETE FROM complaint_responses WHERE complaint_id=ANY(%s) AND response_state='draft'", (ids,))
         conn.commit()
     return {"deleted": count, "scope": "all_categories"}
 
@@ -642,7 +751,7 @@ def permanent_department_all(actor: Annotated[dict, Depends(actor_from_auth)]):
 def cleanup(body: PasswordBody, actor: Annotated[dict, Depends(actor_from_auth)]):
     check_password(actor, body.password); clause, args = scoped_where(actor, 1)
     with connection() as conn:
-        with conn.cursor() as cur: cur.execute(f"DELETE FROM complaints WHERE id IN (SELECT id FROM complaints WHERE deleted_at IS NOT NULL{clause} ORDER BY deleted_at ASC LIMIT 1000) RETURNING id", args); count = len(cur.fetchall())
+        with conn.cursor() as cur: cur.execute(f"DELETE FROM complaints WHERE id IN (SELECT id FROM complaints WHERE deleted_at IS NOT NULL AND complaint_status NOT IN ('완료','취소'){clause} ORDER BY deleted_at ASC LIMIT 1000) RETURNING id", args); count = len(cur.fetchall())
         conn.commit()
     return {"permanently_deleted": count}
 
@@ -946,6 +1055,8 @@ def department_context(actor: Annotated[dict, Depends(actor_from_auth)]):
 def department_complaint(complaint_id: int, actor: dict) -> dict:
     row = fetch_one("SELECT id,title,category,complaint_status FROM complaints WHERE id=%s AND deleted_at IS NULL AND category=ANY(%s)", (complaint_id, require_department(actor)))
     if not row: raise HTTPException(404, "소속 부서에서 처리할 수 있는 민원을 찾지 못했습니다.")
+    if row["complaint_status"] == "취소":
+        raise HTTPException(409, "해당 민원은 삭제(취소)되었습니다.")
     return row
 
 
@@ -956,17 +1067,14 @@ def department_complaints(status: str = "", actor: dict = Depends(actor_from_aut
         COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response,
         COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response_state
         FROM complaints WHERE deleted_at IS NULL AND category=ANY(%s) AND (%s='' OR complaint_status=%s) ORDER BY created_at DESC LIMIT 200""", (categories, status, status))
-    return {"complaints": rows}
+    return {"complaints": [hide_cancelled_content(row) for row in rows]}
 
 
 @app.patch("/api/department/complaints/{complaint_id}/status")
 def department_status(complaint_id: int, body: StatusBody, actor: Annotated[dict, Depends(actor_from_auth)]):
-    if body.status not in STATUSES: raise HTTPException(400, "허용되지 않은 민원 상태입니다.")
-    department_complaint(complaint_id, actor)
-    with connection() as conn:
-        with conn.cursor() as cur: cur.execute("UPDATE complaints SET complaint_status=%s,status_updated_at=NOW() WHERE id=%s RETURNING id,complaint_status,status_updated_at", (body.status, complaint_id)); result = cur.fetchone()
-        conn.commit()
-    return {"complaint": result}
+    if body.status != "진행중":
+        raise HTTPException(409, "민원 접수 시작, 답변 전송 또는 사유를 입력한 취소 기능으로 상태를 변경해 주세요.")
+    return start_complaint(complaint_id, actor)
 
 
 @app.get("/api/department/complaints/{complaint_id}/responses")
@@ -982,6 +1090,8 @@ def create_response(complaint_id: int, body: ResponseBody, actor: Annotated[dict
     if not 2 <= len(content) <= 5000: raise HTTPException(400, "응답은 2~5,000자로 작성해 주세요.")
     with connection() as conn:
         with conn.cursor() as cur:
+            row = locked_complaint(cur, complaint_id, actor)
+            require_open_complaint(row)
             cur.execute("SELECT 1 FROM complaint_responses WHERE complaint_id=%s AND response_state='sent' LIMIT 1", (complaint_id,))
             if cur.fetchone():
                 raise HTTPException(409, "이미 답변 전송이 완료된 민원입니다.")
@@ -998,12 +1108,14 @@ def delete_draft_response(complaint_id: int, actor: Annotated[dict, Depends(acto
     department_complaint(complaint_id, actor)
     with connection() as conn:
         with conn.cursor() as cur:
+            row = locked_complaint(cur, complaint_id, actor)
+            require_open_complaint(row)
             cur.execute("DELETE FROM complaint_responses WHERE complaint_id=%s AND author_user_id=%s AND response_state='draft' RETURNING id", (complaint_id, actor["sub"]))
             deleted = len(cur.fetchall())
             if deleted:
-                cur.execute("UPDATE complaints SET complaint_status='접수',status_updated_at=NOW() WHERE id=%s", (complaint_id,))
+                cur.execute("UPDATE complaints SET status_updated_at=NOW() WHERE id=%s", (complaint_id,))
         conn.commit()
-    return {"deleted": deleted, "complaint_status": "접수" if deleted else None}
+    return {"deleted": deleted, "complaint_status": row["complaint_status"]}
 
 
 @app.post("/api/department/complaints/{complaint_id}/responses/send")
@@ -1011,6 +1123,11 @@ def send_draft_response(complaint_id: int, actor: Annotated[dict, Depends(actor_
     department_complaint(complaint_id, actor)
     with connection() as conn:
         with conn.cursor() as cur:
+            row = locked_complaint(cur, complaint_id, actor)
+            require_open_complaint(row)
+            cur.execute("SELECT 1 FROM complaint_responses WHERE complaint_id=%s AND response_state='sent'", (complaint_id,))
+            if cur.fetchone():
+                raise HTTPException(409, "이미 답변이 완료된 민원입니다.")
             cur.execute("""UPDATE complaint_responses SET response_state='sent',sent_at=NOW()
                 WHERE id=(SELECT id FROM complaint_responses WHERE complaint_id=%s AND author_user_id=%s AND response_state='draft' ORDER BY created_at DESC LIMIT 1)
                 RETURNING id,content,response_state,sent_at""", (complaint_id, actor["sub"]))
@@ -1018,6 +1135,7 @@ def send_draft_response(complaint_id: int, actor: Annotated[dict, Depends(actor_
             if not response:
                 raise HTTPException(400, "전송할 임시 저장 답변이 없습니다.")
             cur.execute("UPDATE complaints SET complaint_status='완료',status_updated_at=NOW() WHERE id=%s", (complaint_id,))
+            cur.execute("DELETE FROM complaint_responses WHERE complaint_id=%s AND response_state='draft'", (complaint_id,))
         conn.commit()
     return {"response": response, "complaint_status": "완료"}
 
@@ -1030,6 +1148,11 @@ def transfer_complaint(complaint_id: int, body: TransferBody, actor: Annotated[d
     department_complaint(complaint_id, actor)
     with connection() as conn:
         with conn.cursor() as cur:
+            row = locked_complaint(cur, complaint_id, actor)
+            require_open_complaint(row)
+            if body.category == row["category"]:
+                raise HTTPException(400, "다른 부서를 선택해 주세요.")
+            cur.execute("DELETE FROM complaint_responses WHERE complaint_id=%s AND response_state='draft'", (complaint_id,))
             cur.execute("UPDATE complaints SET category=%s,complaint_status='접수',status_updated_at=NOW() WHERE id=%s RETURNING id,category,complaint_status", (body.category, complaint_id))
             result = cur.fetchone()
         conn.commit()
@@ -1039,7 +1162,7 @@ def transfer_complaint(complaint_id: int, body: TransferBody, actor: Annotated[d
 @app.get("/api/my/complaints/{complaint_id}/responses")
 def my_responses(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)]):
     require_user(actor)
-    exists = fetch_one("SELECT id FROM complaints WHERE id=%s AND owner_user_id=%s", (complaint_id, actor["owner_id"]))
+    exists = fetch_one("SELECT id FROM complaints WHERE id=%s AND owner_user_id=%s AND complaint_status<>'취소' AND deleted_at IS NULL", (complaint_id, actor["owner_id"]))
     if not exists:
         raise HTTPException(404, "본인 민원을 찾지 못했습니다.")
     return {"responses": fetch_all("SELECT r.id,r.content,r.created_at,r.sent_at,u.display_name author_name FROM complaint_responses r JOIN app_users u ON u.id=r.author_user_id WHERE r.complaint_id=%s AND r.response_state='sent' ORDER BY r.created_at", (complaint_id,))}

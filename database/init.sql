@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS complaints (
   deleted_at TIMESTAMPTZ
 );
 
+-- 업무상 취소는 보관함 삭제와 구분하여 기록한다. 재민원은 이전 내용을 스냅샷으로 보존한다.
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS cancelled_by_role TEXT;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS parent_complaint_id BIGINT REFERENCES complaints(id) ON DELETE SET NULL;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS previous_context JSONB;
+
 CREATE TABLE IF NOT EXISTS source_files (
   id UUID PRIMARY KEY,
   original_name TEXT NOT NULL,
