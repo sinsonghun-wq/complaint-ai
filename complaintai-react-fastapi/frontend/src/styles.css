@@ -15,6 +15,10 @@ body {
   min-height: 100vh;
 }
 aside {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
   background: #152543;
   color: #dce8fb;
   padding: 26px 16px;
@@ -60,8 +64,39 @@ aside button.active {
   background: #29436f;
   color: #fff;
 }
-.account {
+.sidebar-bottom {
   margin-top: auto;
+}
+.import-progress {
+  padding: 14px 8px 18px;
+  display: grid;
+  gap: 8px;
+  color: #dce8fb;
+}
+.import-progress-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+.import-progress-heading strong { color: #88d8ff; }
+.import-progress-track {
+  height: 9px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: #354767;
+}
+.import-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #70cfff;
+  transition: width 0.3s ease;
+}
+.import-progress small { color: #b0c3df; font-size: 11px; }
+.import-progress.completed .import-progress-fill { background: #4ade80; }
+.import-progress.completed .import-progress-heading strong { color: #4ade80; }
+.import-progress-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account {
   display: grid;
   gap: 5px;
   border-top: 1px solid #365274;
@@ -263,6 +298,43 @@ textarea {
   gap: 18px;
   padding: 15px 0;
   border-bottom: 1px solid #e5ecf7;
+}
+.list article.file-complaint {
+  background: #f2f3f5;
+  padding: 15px;
+  border-radius: 10px;
+  margin: 8px 0;
+}
+.source-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.source-filter button {
+  border: 1px solid #cfd9eb;
+  background: #fff;
+  color: #34517e;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.source-filter button.selected {
+  background: #edf2ff;
+  border-color: #5e82ff;
+  color: #3457b3;
+}
+.source-filter small {
+  color: #65758e;
+}
+.source-badge {
+  display: inline-block;
+  padding: 3px 7px;
+  border: 1px solid #d4dbe5;
+  border-radius: 5px;
+  color: #40516e;
+  margin-right: 5px;
 }
 .list p,
 .work p {
@@ -495,6 +567,8 @@ footer span {
     grid-template-columns: 1fr;
   }
   aside {
+    position: static;
+    height: auto;
     min-height: auto;
     flex-direction: row;
     flex-wrap: wrap;
@@ -502,6 +576,10 @@ footer span {
   }
   .brand {
     margin: 0 12px 0 0;
+  }
+  .sidebar-bottom {
+    width: 100%;
+    margin-top: 8px;
   }
   .account {
     margin: 0 0 0 auto;

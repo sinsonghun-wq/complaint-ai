@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import csv
 import hashlib
 import json
@@ -27,6 +28,7 @@ from pypdf import PdfReader
 from .ai import CATEGORIES, analyze, embedding, fallback, fingerprint, infer_csv_mapping
 from .db import connection, fetch_all, fetch_one
 from .security import actor_from_auth, current_account, issue_token, password_hash, public_user, uuid4, verify_password
+from .worker_manager import ensure_csv_worker
 from .settings import CSV_LLM_CONFIDENCE_THRESHOLD, CSV_MAX_UPLOAD_BYTES, CSV_RULE_OTHER_MIN_CONTENT_CHARS, DOCUMENT_MAX_UPLOAD_BYTES, FILE_STORAGE_DIR, IMPORT_PROGRESS_ROWS, LLM_IMPORT_CONCURRENCY, LLM_IMPORT_ENABLED, MAX_BATCH_SIZE, TESSDATA_DIR, TESSERACT_CMD, WEB_ORIGINS
 
 app = FastAPI(title="ComplaintAI FastAPI", version="1.0.0")
@@ -232,8 +234,6 @@ def spreadsheet_records(path: Path, suffix: str) -> list[dict[str, Any]]:
             for worksheet in workbook.worksheets:
                 rows = [(number, list(values)) for number, values in enumerate(worksheet.iter_rows(values_only=True), start=1)]
                 records.extend(_records_from_rows(rows, worksheet.title))
-                if len(records) >= MAX_BATCH_SIZE:
-                    break
         finally:
             workbook.close()
     else:
@@ -242,9 +242,7 @@ def spreadsheet_records(path: Path, suffix: str) -> list[dict[str, Any]]:
         for sheet_name, frame in sheets.items():
             rows = [(number, row) for number, row in enumerate(frame.fillna("").values.tolist(), start=1)]
             records.extend(_records_from_rows(rows, str(sheet_name)))
-            if len(records) >= MAX_BATCH_SIZE:
-                break
-    return records[:MAX_BATCH_SIZE]
+    return records
 
 
 def _text_quality(text: str, required_markers: tuple[str, ...] = ()) -> float:
@@ -355,7 +353,7 @@ def _records_from_case_pages(pages: list[tuple[str, float, float]], filename: st
         if title and body:
             records.append({"source_row": page_number, "source_case": heading.group(1), **fallback(title, body)})
     if records:
-        return records[:MAX_BATCH_SIZE]
+        return records
     combined = "\n".join(text for text, _, _ in pages).strip()
     return [{"source_row": 1, **fallback(Path(filename).stem, combined)}] if combined else []
 
@@ -374,7 +372,7 @@ def _records_from_hwp_text(text: str, filename: str) -> list[dict[str, Any]]:
         if title and body:
             records.append({"source_row": int(heading.group(1)), "source_case": heading.group(1), **fallback(title, body)})
     if records:
-        return records[:MAX_BATCH_SIZE]
+        return records
     return _records_from_case_pages([(text, _text_quality(text, ("신청원인",)), 0.0)], filename)
 
 
@@ -518,7 +516,11 @@ async def batch(body: BatchBody, actor: Annotated[dict, Depends(actor_from_auth)
     if not body.complaints: raise HTTPException(400, "저장할 민원이 없습니다.")
     if actor["role"] == "user" and (len(body.complaints) != 1 or body.complaints[0].get("source_file")):
         raise HTTPException(403, "일반 사용자는 새 민원을 한 건씩 작성할 수 있습니다.")
-    saved, duplicates = await save_records(body.complaints[:MAX_BATCH_SIZE], actor)
+    saved = duplicates = 0
+    for start in range(0, len(body.complaints), MAX_BATCH_SIZE):
+        batch_saved, batch_duplicates = await save_records(body.complaints[start:start + MAX_BATCH_SIZE], actor)
+        saved += batch_saved
+        duplicates += batch_duplicates
     return {"saved": saved, "duplicates": duplicates}
 
 
@@ -534,18 +536,25 @@ def counts(actor: Annotated[dict, Depends(actor_from_auth)]):
 
 
 @app.get("/api/complaints")
-def complaints(deleted: bool = False, category: str | None = None, limit: int = 100, offset: int = 0, actor: dict = Depends(actor_from_auth)):
+def complaints(deleted: bool = False, category: str | None = None, limit: int = 100, offset: int = 0, source: str = "all", actor: dict = Depends(actor_from_auth)):
     limit = max(1, min(limit, 100)); offset = max(offset, 0)
     category = category or None
     if actor["role"] == "admin": clause, scope = "TRUE", []
     else: clause, scope = "owner_user_id=%s", [actor["owner_id"]]
     where = "deleted_at IS NOT NULL" if deleted else "deleted_at IS NULL"
+    if source not in ("all", "user", "file"):
+        raise HTTPException(400, "민원 출처는 all, user, file 중 하나여야 합니다.")
+    # File provenance is independent of ownership, including legacy imports.
+    if source == "user":
+        where += " AND NULLIF(BTRIM(source_file), '') IS NULL"
+    elif source == "file":
+        where += " AND NULLIF(BTRIM(source_file), '') IS NOT NULL"
     if actor["role"] == "user":
         where += " AND NOT (complaint_status='취소' AND cancelled_by_role IS NOT DISTINCT FROM 'user')"
     params: list[Any] = [*scope, category, category, limit, offset]
     response_filter = "" if actor["role"] == "admin" else " AND r.response_state='sent'"
     sql = f"""SELECT id,title,content,summary,category,complaint_status,source_file,source_row,processing_mode,llm_model,embedding_model,created_at,deleted_at,cancelled_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
-        (owner_user_id IS NOT NULL) AS submitted_by_user,
+        (NULLIF(BTRIM(source_file), '') IS NULL) AS submitted_by_user,
         COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response,
         COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response_state
         FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s)
@@ -591,7 +600,7 @@ def complaint_detail(complaint_id: int, actor: Annotated[dict, Depends(actor_fro
     clause, args = ("", []) if actor["role"] == "admin" else (" AND owner_user_id=%s", [actor["owner_id"]])
     response_filter = "" if actor["role"] == "admin" else " AND r.response_state='sent'"
     row = fetch_one(f"""SELECT id,title,content,summary,category,complaint_status,created_at,deleted_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
-        (owner_user_id IS NOT NULL) submitted_by_user,
+        (NULLIF(BTRIM(source_file), '') IS NULL) submitted_by_user,
         COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1),'') latest_response,
         COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1),'') latest_response_state
         FROM complaints WHERE id=%s{clause}""", (complaint_id, *args))
@@ -724,22 +733,24 @@ def permanent(complaint_id: int, body: PasswordBody, actor: Annotated[dict, Depe
 
 @app.delete("/api/complaints/deleted/all")
 def permanent_all(body: PasswordBody, actor: Annotated[dict, Depends(actor_from_auth)]):
-    check_password(actor, body.password); clause, args = scoped_where(actor, 1)
+    # Temporary cross-department test cleanup; do not grant access to users.
+    require_admin(actor)
+    check_password(actor, body.password)
     with connection() as conn:
-        with conn.cursor() as cur: cur.execute(f"DELETE FROM complaints WHERE deleted_at IS NOT NULL AND complaint_status NOT IN ('완료','취소'){clause} RETURNING id", args); count = len(cur.fetchall())
+        with conn.cursor() as cur: cur.execute("DELETE FROM complaints WHERE deleted_at IS NOT NULL RETURNING id"); count = len(cur.fetchall())
         conn.commit()
     return {"permanently_deleted": count}
 
 
 @app.delete("/api/complaints/department/all")
 def permanent_department_all(actor: Annotated[dict, Depends(actor_from_auth)]):
-    """Testing-only cancellation of open complaints; terminal states remain immutable."""
+    """Testing-only archive of all active complaints, including terminal states."""
     # This route is deliberately restricted to department administrators.  It is
     # a temporary test-reset tool and must be removed before production release.
     require_department(actor)
     with connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("UPDATE complaints SET complaint_status='취소',cancelled_at=NOW(),cancelled_by_role='admin',cancellation_reason='테스트 데이터 전체 정리',status_updated_at=NOW() WHERE deleted_at IS NULL AND complaint_status IN ('접수','진행중') RETURNING id")
+            cur.execute("UPDATE complaints SET complaint_status='취소',cancelled_at=NOW(),cancelled_by_role='admin',cancellation_reason='테스트 데이터 전체 정리',status_updated_at=NOW(),deleted_at=NOW() WHERE deleted_at IS NULL RETURNING id")
             ids = [row["id"] for row in cur.fetchall()]
             count = len(ids)
             cur.execute("DELETE FROM complaint_responses WHERE complaint_id=ANY(%s) AND response_state='draft'", (ids,))
@@ -770,11 +781,17 @@ async def save_upload(upload: UploadFile, maximum: int) -> tuple[Path, str]:
 
 
 def csv_encoding(path: Path) -> str:
-    # 한국어 UTF-8 CSV가 통계 기반 감지에서 CP949로 잘못 판정되면 제목·카테고리가 깨진다.
-    # 우선 엄격 UTF-8을 확인하고, 실패할 때만 국내 공공데이터의 CP949로 폴백한다.
-    sample = path.read_bytes()[:65536]
+    # Read a bounded sample; do not load a potentially 1GB CSV into memory.
+    with path.open("rb") as source:
+        sample = source.read(65536)
+    for marker, encoding in ((codecs.BOM_UTF8, "utf-8-sig"),
+                             (codecs.BOM_UTF32_LE, "utf-32"), (codecs.BOM_UTF32_BE, "utf-32"),
+                             (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16")):
+        if sample.startswith(marker):
+            return encoding
     try:
-        sample.decode("utf-8")
+        # An incomplete character at the sample boundary is not invalid UTF-8.
+        codecs.getincrementaldecoder("utf-8")().decode(sample, final=False)
         return "utf-8-sig"
     except UnicodeDecodeError:
         return "cp949"
@@ -923,14 +940,30 @@ def process_csv_job(job: dict[str, Any]) -> None:
             conn.commit()
 
 
+def start_import_worker(job_id: str) -> None:
+    try:
+        ensure_csv_worker()
+    except Exception as error:
+        message = "CSV 처리 워커를 실행하지 못했습니다. 재처리를 눌러 다시 시도하거나 서버 실행 환경을 확인해 주세요."
+        with connection() as db:
+            with db.cursor() as cur:
+                cur.execute("UPDATE import_jobs SET status='failed',last_error=%s WHERE id=%s AND status='queued'", (message, job_id))
+            db.commit()
+        raise HTTPException(503, message) from error
+
+
 @app.post("/api/imports", status_code=202)
 async def create_import(file: UploadFile = File(...), actor: dict = Depends(actor_from_auth)):
     require_admin(actor)
     path, suffix = await save_upload(file, CSV_MAX_UPLOAD_BYTES)
     if suffix != ".csv": path.unlink(missing_ok=True); raise HTTPException(400, "일괄 처리는 CSV 파일만 지원합니다.")
-    encoding = csv_encoding(path)
-    total = sum(1 for _ in csv_rows(path, encoding))
-    headers, samples = csv_preview(path, encoding)
+    try:
+        encoding = csv_encoding(path)
+        total = sum(1 for _ in csv_rows(path, encoding))
+        headers, samples = csv_preview(path, encoding)
+    except (UnicodeError, csv.Error) as error:
+        path.unlink(missing_ok=True)
+        raise HTTPException(422, "CSV 문자 인코딩 또는 형식을 읽을 수 없습니다. 파일을 CSV UTF-8 형식으로 다시 저장해 업로드해 주세요.") from error
     if not headers:
         path.unlink(missing_ok=True); raise HTTPException(422, "CSV 헤더를 찾지 못했습니다.")
     signature = csv_schema_signature(headers)
@@ -952,6 +985,8 @@ async def create_import(file: UploadFile = File(...), actor: dict = Depends(acto
             if not needs_mapping and not stored_mapping:
                 cur.execute("INSERT INTO csv_schema_mappings(schema_signature,column_mapping,confidence,created_by_user_id) VALUES(%s,%s::jsonb,%s,%s) ON CONFLICT(schema_signature) DO NOTHING", (signature, json.dumps(mapping, ensure_ascii=False), mapping["confidence"], actor["sub"]))
         conn.commit()
+    if not needs_mapping:
+        await asyncio.to_thread(start_import_worker, str(job_id))
     return {"job_id": job_id, "status": status, "total_rows": total, "batch_size": MAX_BATCH_SIZE, "needs_mapping": needs_mapping, "headers": headers, "samples": samples, "mapping": mapping}
 
 
@@ -976,6 +1011,7 @@ def confirm_import_mapping(job_id: str, body: CsvMappingBody, actor: Annotated[d
                     VALUES(%s,%s,%s::jsonb,%s,%s)
                     ON CONFLICT(schema_signature) DO UPDATE SET profile_name=EXCLUDED.profile_name,column_mapping=EXCLUDED.column_mapping,confidence=EXCLUDED.confidence,created_by_user_id=EXCLUDED.created_by_user_id,updated_at=NOW()""", (job["schema_signature"], body.profile_name.strip() or None, json.dumps(mapping, ensure_ascii=False), mapping["confidence"], actor["sub"]))
         conn.commit()
+    start_import_worker(job_id)
     return {"job_id": job_id, "status": "queued", "mapping": mapping}
 
 
@@ -1009,6 +1045,7 @@ def retry_import(job_id: str, actor: Annotated[dict, Depends(actor_from_auth)]):
         conn.commit()
     if not row:
         raise HTTPException(404, "재처리할 실패 작업을 찾지 못했습니다.")
+    start_import_worker(job_id)
     return row
 
 
@@ -1025,8 +1062,7 @@ async def intake(file: UploadFile = File(...), actor: dict = Depends(actor_from_
     try:
         records: list[dict[str, Any]] = []
         if suffix == ".csv":
-            rows = list(csv_rows(path, csv_encoding(path)))[:MAX_BATCH_SIZE]
-            records = [record for index, row in enumerate(rows, start=2) if (record := row_to_complaint(row, index))]
+            records = [record for index, row in enumerate(csv_rows(path, csv_encoding(path)), start=2) if (record := row_to_complaint(row, index))]
         elif suffix in {".xlsx", ".xls"}:
             records = spreadsheet_records(path, suffix)
         elif suffix == ".pdf":
@@ -1043,7 +1079,11 @@ async def intake(file: UploadFile = File(...), actor: dict = Depends(actor_from_
         else: raise HTTPException(400, "HWP, PDF, 이미지, XLSX, XLS, CSV 파일만 지원합니다.")
         if not records:
             raise HTTPException(422, "민원 제목과 본문을 가진 데이터를 찾지 못했습니다.")
+        for record in records:
+            record["source_file"] = file.filename or "업로드 문서"
         return {"file_name": file.filename, "processed": len(records), "max_batch_size": MAX_BATCH_SIZE, "complaints": records}
+    except (UnicodeError, csv.Error) as error:
+        raise HTTPException(422, "파일 문자 인코딩 또는 형식을 읽을 수 없습니다. CSV는 UTF-8 형식으로 다시 저장해 주세요.") from error
     finally: path.unlink(missing_ok=True)
 
 
@@ -1063,7 +1103,7 @@ def department_complaint(complaint_id: int, actor: dict) -> dict:
 @app.get("/api/department/complaints")
 def department_complaints(status: str = "", actor: dict = Depends(actor_from_auth)):
     categories = require_department(actor)
-    rows = fetch_all("""SELECT id,title,content,summary,category,complaint_status,status_updated_at,created_at,(owner_user_id IS NOT NULL) submitted_by_user,
+    rows = fetch_all("""SELECT id,title,content,summary,category,complaint_status,status_updated_at,created_at,(NULLIF(BTRIM(source_file), '') IS NULL) submitted_by_user,
         COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response,
         COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response_state
         FROM complaints WHERE deleted_at IS NULL AND category=ANY(%s) AND (%s='' OR complaint_status=%s) ORDER BY created_at DESC LIMIT 200""", (categories, status, status))

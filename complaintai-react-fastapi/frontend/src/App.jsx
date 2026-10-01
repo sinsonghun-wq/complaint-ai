@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { importPercentage } from "./importProgress.js";
 
 const categories = ["행정·안전", "국토·교통", "주택건축", "환경·위생", "보건복지", "소방", "기타"];
 const statusLabel = (value) => ({ "접수": "접수 대기", "진행중": "접수 됨" }[value] || value);
@@ -67,17 +68,20 @@ function Workspace({ auth, api, signout, server, setServer }) {
   const [job, setJob] = useState(null);
   const [csvMapping, setCsvMapping] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [importProgress, setImportProgress] = useState(null);
   const [counts, setCounts] = useState({});
   const [active, setActive] = useState(auth.user.department || "기타");
   const [records, setRecords] = useState([]);
   const [total, setTotal] = useState(0);
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [selected, setSelected] = useState(null);
   const [responseText, setResponseText] = useState("");
   const [transferTarget, setTransferTarget] = useState("");
   const [deletingScope, setDeletingScope] = useState(null);
   const importTimer = useRef(null);
+  const listRequest = useRef(0);
   useEffect(() => () => window.clearInterval(importTimer.current), []);
 
   const refresh = useCallback(async () => {
@@ -85,17 +89,21 @@ function Workspace({ auth, api, signout, server, setServer }) {
     setCounts(Object.fromEntries(data.categories.map((item) => [item.category, item.count])));
   }, [api]);
   const load = useCallback(async () => {
+    const requestId = ++listRequest.current;
     const path = isAdmin
-      ? `/api/complaints?deleted=${view === "deleted"}&category=${encodeURIComponent(view === "deleted" ? "" : active)}&limit=${pageSize}&offset=${(page - 1) * pageSize}`
+      ? `/api/complaints?deleted=${view === "deleted"}&category=${encodeURIComponent(view === "deleted" ? "" : active)}&source=${sourceFilter}&limit=${pageSize}&offset=${(page - 1) * pageSize}`
       : `/api/complaints?deleted=false&limit=${pageSize}&offset=${(page - 1) * pageSize}`;
-    const data = await api(path); setRecords(data.complaints); setTotal(data.total);
-  }, [active, api, isAdmin, page, pageSize, view]);
+    const [data, countData] = await Promise.all([api(path), api("/api/complaints/counts")]);
+    if (requestId !== listRequest.current) return;
+    setRecords(data.complaints); setTotal(data.total);
+    setCounts(Object.fromEntries(countData.categories.map((item) => [item.category, item.count])));
+  }, [active, api, isAdmin, page, pageSize, sourceFilter, view]);
   useEffect(() => { refresh().catch((error) => setMessage(error.message)); }, [refresh]);
   useEffect(() => {
     if (view === "categories" || view === "deleted" || view === "submitted") load().catch((error) => setMessage(error.message));
   }, [load, view]);
   useEffect(() => {
-    if (view !== "submitted" && view !== "categories") return;
+    if (view !== "submitted" && view !== "categories" && view !== "deleted") return;
     let stopped = false;
     const timer = window.setInterval(() => {
       if (!stopped) load().catch((error) => setMessage(error.message));
@@ -161,7 +169,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
   };
   const removeCategory = async () => {
     if (!active || total === 0) return;
-    if (!window.confirm(`${active} 부서 민원 보관함의 ${total}건을 삭제합니다. 정말로 전체 삭제하시겠습니까?`)) return;
+    if (!window.confirm(`${active} 부서의 전체 민원을 삭제합니다. 출처 필터와 관계없이 적용됩니다. 정말로 전체 삭제하시겠습니까?`)) return;
     const reason = window.prompt("접수 대기·접수 됨 상태의 민원에 적용할 취소 사유를 입력하세요. 완료·취소 민원은 제외됩니다.");
     if (!reason?.trim()) return;
     setDeletingScope("category");
@@ -173,16 +181,24 @@ function Workspace({ auth, api, signout, server, setServer }) {
   };
   const restore = async (id) => { try { await api(`/api/complaints/${id}/restore`, { method: "POST" }); await refresh(); await load(); } catch (error) { setMessage(error.message); } };
   const hardDelete = async (id) => {
+    const all = id === "all";
+    if (deletingScope) return;
+    if (!window.confirm(all ? "모든 부서의 삭제된 데이터를 전부 영구 삭제합니다. 현재 출처 필터와 페이지에 관계없이 적용되며 복구할 수 없습니다. 계속하시겠습니까?" : "이 데이터를 영구 삭제하면 복구할 수 없습니다. 계속하시겠습니까?")) return;
     const password = window.prompt("로그인 비밀번호를 입력하세요."); if (!password) return;
-    try { await api(`/api/complaints/${id}/permanent`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) }); await refresh(); await load(); } catch (error) { setMessage(error.message); }
+    setDeletingScope("permanent");
+    try {
+      const result = await api(all ? "/api/complaints/deleted/all" : `/api/complaints/${id}/permanent`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) });
+      setPage(1); await refresh(); await load();
+      setMessage(`${result.permanently_deleted.toLocaleString()}건을 영구 삭제했습니다.`);
+    } catch (error) { setMessage(error.message); } finally { setDeletingScope(null); }
   };
   const deleteDepartmentAll = async () => {
     if (!isAdmin) return;
-    if (!window.confirm("테스트 전용 기능입니다. 모든 부서의 접수 대기·접수 됨 상태의 민원을 취소합니다. 완료·취소 민원은 변경되지 않습니다. 계속하시겠습니까?")) return;
+    if (!window.confirm("테스트 전용 기능입니다. 모든 부서의 민원(완료·취소 포함)을 취소 상태로 바꾸고 삭제된 데이터로 이동합니다. 실제 데이터는 영구 삭제하지 않습니다. 계속하시겠습니까?")) return;
     setDeletingScope("all");
     try {
       const result = await api("/api/complaints/department/all", { method: "DELETE" });
-      setPage(1); await refresh(); await load(); setMessage("");
+      setRecords([]); setTotal(0); setCounts({}); setSelected(null); setPage(1); await refresh(); await load(); setMessage("");
     } catch (error) { setMessage(error.message); } finally { setDeletingScope(null); }
   };
   const trackCsvImport = (jobId) => {
@@ -190,17 +206,13 @@ function Workspace({ auth, api, signout, server, setServer }) {
     const timer = window.setInterval(async () => {
       try {
         const state = await api(`/api/imports/${jobId}`); setJob(state);
+        setImportProgress((current) => ({ ...current, status: state.status, completed: state.completed_rows || 0, total: state.total_rows || 0 }));
         if (state.status === "completed") {
           window.clearInterval(timer); setIsUploading(false); await refresh(); setMessage(`모든 요약이 완료되었습니다. 총 ${state.saved_rows.toLocaleString()}건의 민원이 요약 및 분류 되었습니다.`); navigate("categories", true);
         } else if (state.status === "failed") {
           window.clearInterval(timer); setIsUploading(false); setMessage(`파일 처리에 실패했습니다. ${state.last_error || "실패 행 목록을 확인해 주세요."}`);
-        } else {
-          const progress = state.completed_rows || 0;
-          setMessage(state.status === "queued"
-            ? "파일 처리 작업이 대기열에 등록되었습니다."
-            : `현재 ${progress.toLocaleString()} / ${state.total_rows.toLocaleString()}건을 요약·분류 중입니다. 저장 완료 ${state.saved_rows.toLocaleString()}건`);
         }
-      } catch (error) { window.clearInterval(timer); setIsUploading(false); setMessage(error.message); }
+      } catch (error) { window.clearInterval(timer); setIsUploading(false); setImportProgress((current) => ({ ...current, status: "connection_error" })); setMessage(error.message); }
     }, 1000);
     importTimer.current = timer;
   };
@@ -209,7 +221,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
     try {
       setIsUploading(true);
       const restarted = await api(`/api/imports/${target.id || target.job_id}/retry`, { method: "POST" });
-      setJob(restarted); setMessage("마지막 저장 지점부터 CSV 작업을 다시 대기열에 등록했습니다."); trackCsvImport(restarted.id || restarted.job_id);
+      setJob(restarted); setMessage(""); setImportProgress((current) => ({ ...current, status: "queued", completed: restarted.completed_rows || 0, total: restarted.total_rows || current?.total || 0 })); trackCsvImport(restarted.id || restarted.job_id);
     } catch (error) { setIsUploading(false); setMessage(error.message); }
   };
   const confirmCsvMapping = async () => {
@@ -219,30 +231,42 @@ function Workspace({ auth, api, signout, server, setServer }) {
     try {
       setIsUploading(true);
       const started = await api(`/api/imports/${csvMapping.job_id}/mapping`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profile_name: csvMapping.profile_name || "", title_column: mapping.title_column || "", content_columns: mapping.content_columns, response_column: mapping.response_column || "", category_column: mapping.category_column || "", save_mapping: true }) });
-      setCsvMapping(null); setJob(started); setMessage("헤더 매핑을 저장했습니다. 행별 요약·분류를 시작합니다."); trackCsvImport(started.job_id);
+      setCsvMapping(null); setJob(started); setMessage(""); setImportProgress((current) => ({ ...current, status: "queued" })); trackCsvImport(started.job_id);
     } catch (error) { setIsUploading(false); setMessage(error.message); }
   };
   const upload = async () => {
     if (!file || isUploading) return setMessage(!file ? "처리할 파일을 선택해 주세요." : "파일을 처리하고 있습니다.");
     try {
       setIsUploading(true);
-      setMessage("현재 0건의 민원이 요약 및 분류 되었습니다. 파일을 준비하고 있습니다.");
+      setMessage(""); setJob(null); setCsvMapping(null);
+      setImportProgress({ name: file.name, completed: 0, total: 0, status: "preparing" });
       const form = new FormData(); form.append("file", file);
       if (file.name.toLowerCase().endsWith(".csv")) {
         const created = await api("/api/imports", { method: "POST", body: form }); setJob(created);
+        setImportProgress({ name: file.name, completed: 0, total: created.total_rows || 0, status: created.status });
         if (created.needs_mapping) {
           setIsUploading(false);
           setCsvMapping({ ...created, profile_name: "", mapping: { ...created.mapping, content_columns: created.mapping.content_columns || [] } });
           setMessage("CSV 헤더 자동 판단의 확신이 낮습니다. 아래에서 제목·본문 열을 확인해 주세요.");
         } else {
-          setCsvMapping(null); setMessage("CSV 헤더를 확인했습니다. 행별 요약·분류를 시작합니다."); trackCsvImport(created.job_id);
+          setCsvMapping(null); trackCsvImport(created.job_id);
         }
       } else {
         const data = await api("/api/intake", { method: "POST", body: form });
-        const result = await api("/api/complaints/batch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ complaints: data.complaints }) });
-        setIsUploading(false); setMessage(`모든 요약이 완료되었습니다. 총 ${result.saved.toLocaleString()}건의 민원이 요약 및 분류 되었습니다.`); await refresh(); navigate("categories", true);
+        const batchSize = Math.min(data.max_batch_size || 500, 500);
+        let saved = 0, duplicates = 0;
+        setImportProgress({ name: file.name, completed: 0, total: data.complaints.length, status: "processing" });
+        for (let start = 0; start < data.complaints.length; start += batchSize) {
+          const complaints = data.complaints.slice(start, start + batchSize);
+          const result = await api("/api/complaints/batch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ complaints }) });
+          saved += result.saved; duplicates += result.duplicates;
+          setImportProgress({ name: file.name, completed: Math.min(start + batchSize, data.complaints.length), total: data.complaints.length, status: "processing" });
+          await refresh();
+        }
+        setImportProgress({ name: file.name, completed: data.complaints.length, total: data.complaints.length, status: "completed" });
+        setIsUploading(false); setMessage(`모든 요약이 완료되었습니다. 총 ${saved.toLocaleString()}건의 민원이 요약 및 분류 되었습니다. 중복 제외 ${duplicates.toLocaleString()}건`); await refresh(); navigate("categories", true);
       }
-    } catch (error) { setIsUploading(false); setMessage(error.message); }
+    } catch (error) { setIsUploading(false); setImportProgress((current) => ({ ...current, status: "failed" })); setMessage(error.message); }
   };
   const chooseForIntake = async (record) => {
     if (!record.can_manage) return setMessage("다른 부서 민원은 원문과 상태만 확인할 수 있습니다.");
@@ -296,7 +320,10 @@ function Workspace({ auth, api, signout, server, setServer }) {
   return <div className="app">
     <aside><div className="brand"><b>C</b><strong>ComplaintAI</strong></div><p className="navlabel">민원 업무</p>
       {navItems.map(([id, label]) => <button key={id} className={view === id ? "active" : ""} onClick={() => navigate(id)}>{label}</button>)}
-      <div className="account"><p className="navlabel">계정</p><small>{auth.user.name} · {isAdmin ? `${auth.user.department} 관리자` : "민원인"}</small><button onClick={signout}>로그아웃</button><em>개인정보는 요약 결과에 노출되지 않도록 제외해 처리합니다.</em></div>
+      <div className="sidebar-bottom">
+        {isAdmin && importProgress && <ImportProgress progress={importProgress} />}
+        <div className="account"><p className="navlabel">계정</p><small>{auth.user.name} · {isAdmin ? `${auth.user.department} 관리자` : "민원인"}</small><button onClick={signout}>로그아웃</button><em>개인정보는 요약 결과에 노출되지 않도록 제외해 처리합니다.</em></div>
+      </div>
     </aside>
     <main><header><div><span>{isAdmin ? "부서 민원 관리" : "민원인 업무"}</span><h1>{pageTitle}</h1></div><label>처리 서버 주소<input value={server} onChange={(e) => { setServer(e.target.value); localStorage.setItem("complaintai.fastapi.server", e.target.value); }} /></label></header>
       {message && <p className="notice">{message}</p>}
@@ -321,7 +348,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
         </article>}
       </section>}
       {view === "submitted" && <ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} empty="작성한 민원이 없습니다." user onEdit={edit} onDelete={remove} onFollowUp={writeFollowUp} />}
-      {(view === "categories" || view === "deleted") && <><section className="category"><div className="category-head"><h2>{view === "deleted" ? "삭제된 데이터" : "분류 카테고리"}</h2></div>{view === "categories" && <div className="grid">{adminCategories.map((category) => <button key={category} className={`${active === category ? "selected" : ""} ${isAdmin && category === auth.user.department ? "department-owned" : ""}`} onClick={() => { setActive(category); setPage(1); }}><b>{counts[category] || 0}</b>{category}</button>)}</div>}</section><ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} deleted={view === "deleted"} canManageCategory={canManageCategory} canRunGlobalPurge={isAdmin} deletingScope={deletingScope} empty="표시할 민원이 없습니다." onSelect={chooseForIntake} onDelete={remove} onDeleteAll={removeCategory} onDepartmentPurge={deleteDepartmentAll} onRestore={restore} onHardDelete={hardDelete} /></>}
+      {(view === "categories" || view === "deleted") && <><section className="category"><div className="category-head"><h2>{view === "deleted" ? "삭제된 데이터" : "분류 카테고리"}</h2></div>{view === "categories" && <div className="grid">{adminCategories.map((category) => <button key={category} className={`${active === category ? "selected" : ""} ${isAdmin && category === auth.user.department ? "department-owned" : ""}`} onClick={() => { setActive(category); setPage(1); }}><b>{counts[category] || 0}</b>{category}</button>)}</div>}</section><ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} sourceFilter={sourceFilter} setSourceFilter={setSourceFilter} deleted={view === "deleted"} canManageCategory={canManageCategory} canRunGlobalPurge={isAdmin} deletingScope={deletingScope} empty="표시할 민원이 없습니다." onSelect={chooseForIntake} onDelete={remove} onDeleteAll={removeCategory} onDepartmentPurge={deleteDepartmentAll} onRestore={restore} onHardDelete={hardDelete} /></>}
       {view === "intake" && <section className="department-workspace">
         <article className="panel intake">
           {!selected ? <><h2>민원 접수</h2><p className="muted">민원 접수는 분류 목록에서 선택한 민원만 처리할 수 있습니다.</p><button className="primary" onClick={() => navigate("categories")}>분류 목록 이동</button></> : selected.complaint_status === "취소" || selected.deleted_at || !selected.can_manage ? <article className="completion" role="alert"><h3>{selected.complaint_status === "취소" ? "해당 민원은 삭제(취소)되었습니다." : "해당 민원을 더 이상 처리할 수 없습니다."}</h3><p>{selected.cancelled_by_role === "user" ? "민원인이 해당 민원을 취소했습니다." : selected.cancellation_reason || "담당 부서가 변경되었거나 민원이 삭제되었습니다."}</p><button onClick={() => { setSelected(null); setResponseText(""); navigate("categories"); }}>분류 목록으로 이동</button></article> : <>
@@ -348,18 +375,30 @@ function Workspace({ auth, api, signout, server, setServer }) {
   </div>;
 }
 
+function ImportProgress({ progress }) {
+  const percentage = importPercentage(progress);
+  const status = { preparing: "파일 준비", queued: "대기 중", processing: "처리 중", running: "처리 중", awaiting_mapping: "열 매핑 확인 필요", completed: "처리 완료", failed: "처리 실패", connection_error: "연결 확인 필요" }[progress.status] || "처리 중";
+  return <section className={`import-progress${progress.status === "completed" ? " completed" : ""}`} aria-label="파일 처리 진행률">
+    <div className="import-progress-heading"><span>{status}</span><strong>{percentage}%</strong></div>
+    <div className="import-progress-track" role="progressbar" aria-label="민원 파일 처리" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percentage} aria-valuetext={`${status}, ${percentage}%`}><div className="import-progress-fill" style={{ width: `${percentage}%` }} /></div>
+    <small className="import-progress-file" title={progress.name}>{progress.name}</small>
+    <small>{progress.total > 0 ? `${(progress.completed || 0).toLocaleString()} / ${progress.total.toLocaleString()}건` : "전체 건수 확인 중"}</small>
+  </section>;
+}
+
 function PreviousContext({ context }) {
   if (!context) return null;
   return <details className="answer previous-context" open><summary>이전 민원 및 완료 답변</summary><h4>{context.title}</h4><p className="original">{context.content}</p><b>이전 답변</b><p className="original">{context.response}</p>{context.previous_context && <PreviousContext context={context.previous_context} />}</details>;
 }
 
-function ComplaintList({ records, total, page, pageSize, setPage, setPageSize, empty, user, deleted, canManageCategory, canRunGlobalPurge, deletingScope, onEdit, onDelete, onDeleteAll, onDepartmentPurge, onRestore, onHardDelete, onSelect, onFollowUp }) {
+function ComplaintList({ records, total, page, pageSize, setPage, setPageSize, sourceFilter, setSourceFilter, empty, user, deleted, canManageCategory, canRunGlobalPurge, deletingScope, onEdit, onDelete, onDeleteAll, onDepartmentPurge, onRestore, onHardDelete, onSelect, onFollowUp }) {
   return <section className="panel">
     <div className="list-head"><h2>{deleted ? "삭제된 데이터 보관함" : user ? "내 민원 목록" : "부서 민원 보관함"}</h2><label>한 번에 보기<select value={pageSize} onChange={(e) => { setPageSize(+e.target.value); setPage(1); }}>{[10, 20, 50, 100].map((value) => <option key={value}>{value}</option>)}</select></label></div>
+    {!user && <div className="source-filter" role="group" aria-label="민원 출처 필터">{[["all", "전체"], ["user", "민원인 작성"], ["file", "파일 업로드"]].map(([value, label]) => <button key={value} aria-pressed={sourceFilter === value} className={sourceFilter === value ? "selected" : ""} onClick={() => { setSourceFilter(value); setPage(1); }}>{label}</button>)}<small>파일 업로드 민원은 옅은 회색으로 표시됩니다.</small></div>}
     <div className="list">{records.map((record) => {
       const cancelled = record.complaint_status === "취소";
-      return <article key={record.id}><div>
-        <h3>{record.title}</h3><small>{record.category} · 상태: <b>{statusLabel(record.complaint_status)}</b> · {new Date(record.created_at).toLocaleDateString()}</small>
+      return <article key={record.id} className={!record.submitted_by_user ? "file-complaint" : "user-complaint"}><div>
+        <h3>{record.title}</h3><small><span className="source-badge">{record.submitted_by_user ? "민원인 작성" : "파일 업로드"}</span> {record.category} · 상태: <b>{statusLabel(record.complaint_status)}</b> · {new Date(record.created_at).toLocaleDateString()}</small>
         {cancelled ? <div className="answer cancellation" role="status"><b>{record.cancelled_by_role === "user" ? "민원인이 해당 민원을 취소했습니다." : "민원이 취소되었습니다."}</b>{record.cancelled_by_role === "admin" && <p>취소 사유: {record.cancellation_reason || "관리자에 의해 취소되었습니다."}{user && " 해당 이유로 인해 민원이 취소되었습니다."}</p>}</div> : <>
           <p>{record.summary}</p><details><summary>원본 민원 확인</summary><p className="original">{record.content}</p></details>
           <PreviousContext context={record.previous_context} />
@@ -377,6 +416,6 @@ function ComplaintList({ records, total, page, pageSize, setPage, setPageSize, e
       </div></article>;
     })}</div>
     {!records.length && <p>{empty}</p>}
-    <footer>{!deleted && !user && <>{canManageCategory && <button className="danger" disabled={total === 0 || Boolean(deletingScope)} onClick={onDeleteAll}>{deletingScope === "category" ? "삭제 중..." : "선택 카테고리 삭제"}</button>}{canRunGlobalPurge && <button className="danger" disabled={Boolean(deletingScope)} onClick={onDepartmentPurge}>{deletingScope === "all" ? "삭제 중..." : "분류 카테고리 전체 삭제 (테스트)"}</button>}</>}<span>{total}건</span><button disabled={page <= 1} onClick={() => setPage(page - 1)}>이전</button><button disabled={page * pageSize >= total} onClick={() => setPage(page + 1)}>다음</button></footer>
+    <footer>{deleted && canRunGlobalPurge && <button className="danger" disabled={Boolean(deletingScope)} onClick={() => onHardDelete("all")}>{deletingScope === "permanent" ? "영구 삭제 중..." : "삭제된 데이터 전체 영구 삭제 (테스트)"}</button>}{!deleted && !user && <>{canManageCategory && <button className="danger" disabled={total === 0 || Boolean(deletingScope)} onClick={onDeleteAll}>{deletingScope === "category" ? "삭제 중..." : "선택 카테고리 삭제"}</button>}{canRunGlobalPurge && <button className="danger" disabled={Boolean(deletingScope)} onClick={onDepartmentPurge}>{deletingScope === "all" ? "삭제 중..." : "분류 카테고리 전체 삭제 (테스트)"}</button>}</>}<span>{total}건</span><button disabled={page <= 1} onClick={() => setPage(page - 1)}>이전</button><button disabled={page * pageSize >= total} onClick={() => setPage(page + 1)}>다음</button></footer>
   </section>;
 }

@@ -13,6 +13,7 @@ import time
 from .db import connection
 from .main import process_csv_job
 from .settings import IMPORT_HEARTBEAT_TIMEOUT_SECONDS, IMPORT_WORKER_POLL_SECONDS
+from .worker_manager import WORKER_LOCK_KEY
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOGGER = logging.getLogger("complaintai.import-worker")
@@ -58,8 +59,22 @@ def claim_next_job() -> dict | None:
 
 
 def run() -> None:
+    # Keep the session lock for the worker lifetime. It is released on exit/crash.
+    with connection() as lease:
+        lease.autocommit = True
+        with lease.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(%s) AS acquired", (WORKER_LOCK_KEY,))
+            if not cur.fetchone()["acquired"]:
+                LOGGER.info("Another CSV worker is already running; exiting.")
+                return
+        run_loop(lease)
+
+
+def run_loop(lease) -> None:
     LOGGER.info("CSV import worker started: %s", WORKER_ID)
     while True:
+        # Fail closed if the DB session carrying the singleton lock is lost.
+        lease.execute("SELECT 1")
         stale = mark_stale_jobs_failed()
         if stale:
             LOGGER.warning("Marked %s stale import job(s) as failed.", stale)

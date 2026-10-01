@@ -60,6 +60,29 @@ class ComplaintWorkflowTests(unittest.TestCase):
         self.ids.append(identifier)
         return identifier
 
+    def test_source_filter_and_pagination(self):
+        direct = self.complaint()
+        uploaded = self.complaint()
+        with connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE complaints SET source_file='workflow-test.csv' WHERE id=%s", (uploaded,))
+        path = "/api/complaints?category=" + "국토·교통"
+        for source, identifier, submitted in (("user", direct, True), ("file", uploaded, False)):
+            data = self.request("GET", path + "&source=" + source).json()
+            self.assertEqual(data["total"], 1)
+            self.assertEqual(data["complaints"][0]["id"], identifier)
+            self.assertEqual(data["complaints"][0]["submitted_by_user"], submitted)
+            page = self.request("GET", path + "&source=" + source + "&limit=1&offset=1").json()
+            self.assertEqual(page["total"], 1)
+            self.assertEqual(page["complaints"], [])
+        self.assertEqual(self.request("GET", path + "&source=all").json()["total"], 2)
+        self.assertEqual(self.request("GET", path + "&source=file", self.other_user).json()["total"], 0)
+        self.assertEqual(self.request("GET", path + "&source=invalid").status_code, 400)
+        self.assertFalse(self.request("GET", f"/api/complaints/{uploaded}", self.admin).json()["complaint"]["submitted_by_user"])
+        admin_list = self.request("GET", path + "&source=file", self.admin).json()["complaints"]
+        self.assertTrue(any(item["id"] == uploaded for item in admin_list))
+        self.assertTrue(all(not item["submitted_by_user"] for item in admin_list))
+
     def complete(self, identifier):
         base = f"/api/department/complaints/{identifier}"
         self.assertEqual(self.request("POST", base + "/start", self.admin).status_code, 200)

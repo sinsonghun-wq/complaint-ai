@@ -100,8 +100,8 @@ async def embedding(record: dict[str, Any]) -> list[float] | None:
         return None
     text = embedding_document(record)
     try:
-        # 대량 CSV에서 로컬 임베딩 서버가 꺼졌을 때 행마다 45초씩 대기하지 않는다.
-        async with httpx.AsyncClient(timeout=min(EMBEDDING_TIMEOUT_MS / 1000, 5)) as client:
+        # Allow model loading and embedding generation up to the configured timeout.
+        async with httpx.AsyncClient(timeout=EMBEDDING_TIMEOUT_MS / 1000) as client:
             if EMBEDDING_PROVIDER == "ollama":
                 response = await client.post(f"{OLLAMA_URL}/api/embed", json={"model": OLLAMA_EMBEDDING_MODEL, "input": text, "keep_alive": "10m"})
                 response.raise_for_status(); vector = response.json().get("embeddings", [None])[0]
