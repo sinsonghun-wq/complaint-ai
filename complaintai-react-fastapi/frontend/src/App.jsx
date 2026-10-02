@@ -137,35 +137,33 @@ function Workspace({ auth, api, signout, server, setServer }) {
   const navigate = (next, keepMessage = false) => { setView(next); if (!keepMessage) setMessage(""); };
 
   const summarize = async () => {
-    try {
-      setMessage("요약과 분류를 진행 중입니다…");
-      const data = await api("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, content }) });
-      setAnalysis(data.analysis); setMessage("요약이 완료되었습니다. 내용을 확인한 뒤 접수해 주세요.");
-    } catch (error) { setMessage(error.message); }
+    await submitComplaint();
   };
   const submitComplaint = async () => {
-    if (!analysis || actionBusy) return;
+    if (actionBusy) return;
+    if (!content.trim()) { setMessage("민원 내용을 입력해 주세요."); return; }
     setActionBusy(true);
     try {
-      setMessage("민원을 접수하고 있습니다…");
+      setMessage("");
+      let receiptMessage = "민원이 접수되었습니다.";
       if (editing) {
         await api(`/api/complaints/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, content }) });
       } else if (followUp) {
         await api(`/api/complaints/${followUp.id}/follow-up`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, content }) });
       } else {
-        await api("/api/complaints/batch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ complaints: [{ title: analysis.title, content: analysis.content, category: analysis.category, use_ai: false }] }) });
+        const result = await api("/api/complaints", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, content }) });
+        receiptMessage = result.message || receiptMessage;
       }
-      await refresh(); setTitle(""); setContent(""); setAnalysis(null); setEditing(null); setFollowUp(null);
-      setMessage(editing ? "민원이 수정되었습니다." : followUp ? "이전 민원과 답변을 포함한 재민원이 접수되었습니다." : "민원이 접수되었습니다."); navigate("submitted", true);
+      setPage(1); setTitle(""); setContent(""); setAnalysis(null); setEditing(null); setFollowUp(null);
+      setMessage(editing ? "민원이 수정되었습니다." : followUp ? "이전 민원과 답변을 포함한 재민원이 접수되었습니다." : receiptMessage); navigate("submitted", true);
     } catch (error) { setMessage(error.message); } finally { setActionBusy(false); }
   };
   const edit = (record) => { if (record.complaint_status !== "접수") return; setFollowUp(null); setEditing(record); setTitle(record.title); setContent(record.content); setAnalysis(null); navigate("write"); };
   const writeFollowUp = (record) => { setEditing(null); setFollowUp(record); setTitle(`재민원: ${record.title}`); setContent(""); setAnalysis(null); navigate("write"); };
-  const remove = async (id) => {
-    if (!window.confirm("이 민원을 삭제할까요?")) return;
-    const reason = isAdmin ? window.prompt("민원을 취소하는 이유를 입력해 주세요. 민원인에게 표시됩니다.") : "";
-    if (isAdmin && !reason?.trim()) return;
-    try { const result = await api(`/api/complaints/${id}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) }); await refresh(); await load(); setMessage(result.message); } catch (error) { setMessage(error.message); }
+  const remove = async (id, reason = "") => {
+    if (!isAdmin && !window.confirm("이 민원을 삭제할까요?")) return false;
+    if (isAdmin && !reason.trim()) return false;
+    try { const result = await api(`/api/complaints/${id}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: reason.trim() }) }); await refresh(); await load(); setMessage(result.message); return true; } catch (error) { setMessage(error.message); return false; }
   };
   const removeCategory = async () => {
     if (!active || total === 0) return;
@@ -327,7 +325,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
     </aside>
     <main><header><div><span>{isAdmin ? "부서 민원 관리" : "민원인 업무"}</span><h1>{pageTitle}</h1></div><label>처리 서버 주소<input value={server} onChange={(e) => { setServer(e.target.value); localStorage.setItem("complaintai.fastapi.server", e.target.value); }} /></label></header>
       {message && <p className="notice">{message}</p>}
-      {view === "write" && <section className="panel compose"><h2>{editing ? "민원 수정" : followUp ? "완료 민원에 재민원 작성" : "민원 내용을 입력하세요"}</h2>{followUp && <PreviousContext context={{ title: followUp.title, content: followUp.content, response: followUp.latest_response, previous_context: followUp.previous_context }} />}<label>민원 제목<input value={title} onChange={(e) => { setTitle(e.target.value); setAnalysis(null); }} /></label><label>민원 원문<textarea value={content} onChange={(e) => { setContent(e.target.value); setAnalysis(null); }} placeholder="민원 내용을 가능한 구체적으로 작성해 주세요." /></label><div className="actions"><button className="primary" onClick={summarize}>요약하기</button>{(editing || followUp) && <button onClick={() => { setEditing(null); setFollowUp(null); setTitle(""); setContent(""); setAnalysis(null); }}>작성 취소</button>}</div>{analysis && <article className="analysis"><h3>{analysis.title}</h3><p>{analysis.summary}</p><div className="chips"><span>{analysis.category}</span><span>{analysis.urgency}</span></div><button className="primary" disabled={actionBusy} onClick={submitComplaint}>{actionBusy ? "저장 중..." : editing ? "수정 내용 저장" : followUp ? "재민원 접수" : "민원 접수"}</button></article>}</section>}
+      {view === "write" && <section className="panel compose"><h2>{editing ? "민원 수정" : followUp ? "완료 민원에 재민원 작성" : "민원 내용을 입력하세요"}</h2>{followUp && <PreviousContext context={{ title: followUp.title, content: followUp.content, response: followUp.latest_response, previous_context: followUp.previous_context }} />}<label>민원 제목<input value={title} onChange={(e) => { setTitle(e.target.value); setAnalysis(null); }} /></label><label>민원 원문<textarea value={content} onChange={(e) => { setContent(e.target.value); setAnalysis(null); }} placeholder="민원 내용을 가능한 구체적으로 작성해 주세요." /></label><div className="actions compose-actions"><button className="primary" disabled={actionBusy} onClick={summarize}>{actionBusy ? "접수 중..." : editing ? "수정 완료" : followUp ? "재민원 접수" : "작성완료"}</button>{(editing || followUp) && <button onClick={() => { setEditing(null); setFollowUp(null); setTitle(""); setContent(""); setAnalysis(null); }}>작성 취소</button>}</div></section>}
       {view === "upload" && <section className="panel compose">
         <h2>파일에서 일괄 가져오기</h2>
         <p className="muted">각 행은 독립적인 민원으로 요약·분류되며, 담당 부서의 분류 목록에 저장됩니다.</p>
@@ -392,28 +390,52 @@ function PreviousContext({ context }) {
 }
 
 function ComplaintList({ records, total, page, pageSize, setPage, setPageSize, sourceFilter, setSourceFilter, empty, user, deleted, canManageCategory, canRunGlobalPurge, deletingScope, onEdit, onDelete, onDeleteAll, onDepartmentPurge, onRestore, onHardDelete, onSelect, onFollowUp }) {
+  const [cancellingId, setCancellingId] = useState(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
+  useEffect(() => { setCancellingId(null); setCancelReason(""); }, [page, pageSize, sourceFilter, deleted, user]);
+  const toggleCancellation = (id) => {
+    if (cancelBusy) return;
+    setCancellingId((current) => current === id ? null : id);
+    setCancelReason("해당 민원은 잘못된 사유로 인해 취소되었습니다.");
+  };
+  const sendCancellation = async (event, id) => {
+    event.preventDefault();
+    if (cancelBusy || !cancelReason.trim()) return;
+    setCancelBusy(true);
+    try {
+      if (await onDelete(id, cancelReason)) { setCancellingId(null); setCancelReason(""); }
+    } finally { setCancelBusy(false); }
+  };
   return <section className="panel">
     <div className="list-head"><h2>{deleted ? "삭제된 데이터 보관함" : user ? "내 민원 목록" : "부서 민원 보관함"}</h2><label>한 번에 보기<select value={pageSize} onChange={(e) => { setPageSize(+e.target.value); setPage(1); }}>{[10, 20, 50, 100].map((value) => <option key={value}>{value}</option>)}</select></label></div>
     {!user && <div className="source-filter" role="group" aria-label="민원 출처 필터">{[["all", "전체"], ["user", "민원인 작성"], ["file", "파일 업로드"]].map(([value, label]) => <button key={value} aria-pressed={sourceFilter === value} className={sourceFilter === value ? "selected" : ""} onClick={() => { setSourceFilter(value); setPage(1); }}>{label}</button>)}<small>파일 업로드 민원은 옅은 회색으로 표시됩니다.</small></div>}
     <div className="list">{records.map((record) => {
       const cancelled = record.complaint_status === "취소";
-      return <article key={record.id} className={!record.submitted_by_user ? "file-complaint" : "user-complaint"}><div>
-        <h3>{record.title}</h3><small><span className="source-badge">{record.submitted_by_user ? "민원인 작성" : "파일 업로드"}</span> {record.category} · 상태: <b>{statusLabel(record.complaint_status)}</b> · {new Date(record.created_at).toLocaleDateString()}</small>
+      return <article key={record.id} className={!record.submitted_by_user ? "file-complaint" : "user-complaint"}><div className="record-row"><div>
+        <h3>{record.title}</h3><small><span className="source-badge">{record.submitted_by_user ? "민원인 작성" : "파일 업로드"}</span> {record.category || "부서 판별중..."} · 상태: <b>{statusLabel(record.complaint_status)}</b> · {new Date(record.created_at).toLocaleDateString()}</small>
         {cancelled ? <div className="answer cancellation" role="status"><b>{record.cancelled_by_role === "user" ? "민원인이 해당 민원을 취소했습니다." : "민원이 취소되었습니다."}</b>{record.cancelled_by_role === "admin" && <p>취소 사유: {record.cancellation_reason || "관리자에 의해 취소되었습니다."}{user && " 해당 이유로 인해 민원이 취소되었습니다."}</p>}</div> : <>
-          <p>{record.summary}</p><details><summary>원본 민원 확인</summary><p className="original">{record.content}</p></details>
+          {user ? <p className="original">{record.content}</p> : <><p>{record.summary}</p><details><summary>원본 민원 확인</summary><p className="original">{record.content}</p></details></>}
           <PreviousContext context={record.previous_context} />
           {record.latest_response && <div className={record.latest_response_state === "draft" ? "answer draft-answer" : "answer"}><b>{record.latest_response_state === "draft" ? "임시 저장 답변 · 관리자만 확인 가능" : "답변 완료"}</b><p className="original">{record.latest_response}</p></div>}
         </>}
       </div><div className="record-actions">
         {cancelled ? <span className="read-only">취소 · 처리 불가</span> : deleted ? record.can_manage ? <><button onClick={() => onRestore(record.id)}>복원</button>{record.complaint_status !== "완료" && <button className="danger" onClick={() => onHardDelete(record.id)}>영구 삭제</button>}</> : <span className="read-only">읽기 전용</span> : user ? <>
           {record.complaint_status === "접수" && <button onClick={() => onEdit(record)}>수정</button>}
+          {record.complaint_status === "진행중" && <span className="read-only">관리자가 접수를 시작하여 수정할 수 없습니다.</span>}
           {isOpen(record) && <button className="danger" onClick={() => onDelete(record.id)}>삭제</button>}
           {record.complaint_status === "완료" && <button className="primary" onClick={() => onFollowUp(record)}>재민원 작성</button>}
         </> : record.can_manage ? <>
           <button className="primary" onClick={() => onSelect(record)}>{record.complaint_status === "완료" ? "완료 답변 확인" : "민원 접수"}</button>
-          {isOpen(record) && <button className="danger" onClick={() => onDelete(record.id)}>삭제</button>}
+          {isOpen(record) && <button className="danger" disabled={cancelBusy} aria-expanded={cancellingId === record.id} aria-controls={`cancel-reason-${record.id}`} onClick={() => toggleCancellation(record.id)}>삭제</button>}
         </> : <span className="read-only">읽기 전용</span>}
-      </div></article>;
+      </div></div>
+      {!user && !deleted && record.can_manage && isOpen(record) && cancellingId === record.id && <form id={`cancel-reason-${record.id}`} className="cancel-reason-editor" onSubmit={(event) => sendCancellation(event, record.id)}>
+        <label htmlFor={`cancel-reason-input-${record.id}`}>삭제 사유<textarea id={`cancel-reason-input-${record.id}`} autoFocus required maxLength={2000} disabled={cancelBusy} value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} /></label>
+        <p className="muted">전달하면 해당 민원이 취소되며, 작성한 민원인에게 이 사유가 표시됩니다.</p>
+        <div className="actions compose-actions"><button className="primary" disabled={cancelBusy || !cancelReason.trim()} type="submit">{cancelBusy ? "전달 중..." : "전달"}</button></div>
+      </form>}
+      </article>;
     })}</div>
     {!records.length && <p>{empty}</p>}
     <footer>{deleted && canRunGlobalPurge && <button className="danger" disabled={Boolean(deletingScope)} onClick={() => onHardDelete("all")}>{deletingScope === "permanent" ? "영구 삭제 중..." : "삭제된 데이터 전체 영구 삭제 (테스트)"}</button>}{!deleted && !user && <>{canManageCategory && <button className="danger" disabled={total === 0 || Boolean(deletingScope)} onClick={onDeleteAll}>{deletingScope === "category" ? "삭제 중..." : "선택 카테고리 삭제"}</button>}{canRunGlobalPurge && <button className="danger" disabled={Boolean(deletingScope)} onClick={onDepartmentPurge}>{deletingScope === "all" ? "삭제 중..." : "분류 카테고리 전체 삭제 (테스트)"}</button>}</>}<span>{total}건</span><button disabled={page <= 1} onClick={() => setPage(page - 1)}>이전</button><button disabled={page * pageSize >= total} onClick={() => setPage(page + 1)}>다음</button></footer>

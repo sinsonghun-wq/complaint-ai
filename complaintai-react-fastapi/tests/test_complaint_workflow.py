@@ -3,6 +3,7 @@
 Run: python -m unittest discover -s tests -v
 Only test-created accounts and complaints are removed during cleanup.
 """
+import asyncio
 import uuid
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -12,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.ai import fallback
 from app.db import connection, fetch_one
-from app.main import app
+from app.main import app, classify_submission
 from app.security import issue_token, password_hash
 
 
@@ -96,6 +97,130 @@ class ComplaintWorkflowTests(unittest.TestCase):
         started = self.request("POST", f"/api/department/complaints/{identifier}/start", self.admin)
         self.assertEqual(started.json()["complaint"]["complaint_status"], "진행중")
         self.assertEqual(self.request("PATCH", f"/api/complaints/{identifier}", json=body).status_code, 409)
+
+    def test_repeated_edits_remain_allowed_until_admin_starts(self):
+        identifier = self.complaint()
+        for index in range(3):
+            body = {'title': f'도로 민원 수정 {index}', 'content': f'도로에 구멍이 있어 보수를 요청합니다. 수정 번호 {index}'}
+            self.assertEqual(self.request('PATCH', f'/api/complaints/{identifier}', json=body).status_code, 200)
+            row = self.request('GET', f'/api/complaints/{identifier}').json()['complaint']
+            self.assertEqual(row['complaint_status'], '접수')
+            self.assertEqual(row['analysis_state'], 'completed')
+            self.assertEqual(row['title'], body['title'])
+        self.assertEqual(self.request('POST', f'/api/department/complaints/{identifier}/start', self.admin).status_code, 200)
+        self.assertEqual(self.request('PATCH', f'/api/complaints/{identifier}', json=body).status_code, 409)
+
+    def pending_submission(self):
+        with patch('app.main.BackgroundTasks.add_task'):
+            response = self.request('POST', '/api/complaints', json={'title': '직접 작성 제목', 'content': '도로의 구멍을 보수해 주세요.'})
+        self.assertEqual(response.status_code, 201)
+        return response.json()['complaint']
+
+    def test_submission_visible_before_classification(self):
+        row = self.pending_submission()
+        detail = self.request('GET', f"/api/complaints/{row['id']}").json()['complaint']
+        self.assertEqual(detail['title'], '직접 작성 제목')
+        self.assertEqual(detail['content'], '도로의 구멍을 보수해 주세요.')
+        self.assertIsNone(detail['category'])
+        self.assertEqual(detail['complaint_status'], '접수')
+        self.assertEqual(detail['analysis_state'], 'pending')
+        self.assertFalse(self.ai_patch.new.called)
+        asyncio.run(classify_submission(row['id'], row['analysis_revision']))
+        detail = self.request('GET', f"/api/complaints/{row['id']}").json()['complaint']
+        self.assertEqual(detail['category'], '국토·교통')
+        self.assertEqual(detail['analysis_state'], 'completed')
+        self.assertEqual(self.request('POST', '/api/complaints', self.admin, json={'content': '관리자 작성'}).status_code, 403)
+
+    def test_pending_submission_duplicates_and_deleted_resubmission(self):
+        row = self.pending_submission()
+        with patch('app.main.BackgroundTasks.add_task'):
+            duplicate = self.request('POST', '/api/complaints', json={'title': '제목만 다른 민원', 'content': '도로의 구멍을 보수해 주세요.'})
+            self.assertEqual(duplicate.json()['complaint']['id'], row['id'])
+            self.assertEqual(duplicate.json()['duplicates'], 1)
+            self.assertEqual(self.request('DELETE', f"/api/complaints/{row['id']}").status_code, 200)
+            resubmitted = self.request('POST', '/api/complaints', json={'title': '다시 제출', 'content': '도로의 구멍을 보수해 주세요.'})
+        self.assertNotEqual(resubmitted.json()['complaint']['id'], row['id'])
+
+    def test_delete_while_classifying_does_not_resurrect(self):
+        row = self.pending_submission()
+        async def scenario():
+            started, release = asyncio.Event(), asyncio.Event()
+            async def delayed(title, content):
+                started.set()
+                await release.wait()
+                return fallback(title, content)
+            with patch('app.main.analyze', new=delayed):
+                task = asyncio.create_task(classify_submission(row['id'], row['analysis_revision']))
+                await asyncio.wait_for(started.wait(), 3)
+                response = await asyncio.to_thread(self.request, 'DELETE', f"/api/complaints/{row['id']}")
+                self.assertEqual(response.status_code, 200)
+                release.set()
+                await asyncio.wait_for(task, 3)
+        asyncio.run(scenario())
+        stored = fetch_one('SELECT * FROM complaints WHERE id=%s', (row['id'],))
+        self.assertEqual(stored['complaint_status'], '취소')
+        self.assertIsNotNone(stored['deleted_at'])
+        self.assertIsNone(stored['category'])
+        self.assertEqual(stored['analysis_state'], 'cancelled')
+        self.assertNotIn(row['id'], [r['id'] for r in self.request('GET', '/api/complaints').json()['complaints']])
+        self.assertFalse(self.embedding_patch.new.called)
+
+    def test_edit_while_classifying_discards_old_result(self):
+        row = self.pending_submission()
+        async def scenario():
+            started, release = asyncio.Event(), asyncio.Event()
+            async def delayed(title, content):
+                started.set()
+                await release.wait()
+                return fallback(title, content)
+            with patch('app.main.analyze', new=delayed):
+                task = asyncio.create_task(classify_submission(row['id'], row['analysis_revision']))
+                await asyncio.wait_for(started.wait(), 3)
+                with patch('app.main.BackgroundTasks.add_task'):
+                    response = await asyncio.to_thread(self.request, 'PATCH', f"/api/complaints/{row['id']}", json={'title': '수정된 제목', 'content': '쓰레기 악취 및 환경 오염을 처리해 주세요.'})
+                self.assertEqual(response.status_code, 200)
+                release.set()
+                await asyncio.wait_for(task, 3)
+            stored = fetch_one('SELECT * FROM complaints WHERE id=%s', (row['id'],))
+            self.assertIsNone(stored['category'])
+            self.assertEqual(stored['analysis_state'], 'pending')
+            self.assertEqual(stored['analysis_revision'], row['analysis_revision'] + 1)
+            await classify_submission(row['id'], stored['analysis_revision'])
+        asyncio.run(scenario())
+        stored = fetch_one('SELECT * FROM complaints WHERE id=%s', (row['id'],))
+        self.assertEqual(stored['title'], '수정된 제목')
+        self.assertEqual(stored['category'], '환경·위생')
+
+    def test_edit_clears_completed_analysis_and_preserves_original_text(self):
+        identifier = self.complaint()
+        with patch('app.main.BackgroundTasks.add_task'):
+            response = self.request('PATCH', f'/api/complaints/{identifier}', json={'title': '새 제목', 'content': '수정된 민원 원문입니다.'})
+        self.assertEqual(response.status_code, 200)
+        stored = fetch_one('SELECT * FROM complaints WHERE id=%s', (identifier,))
+        self.assertIsNone(stored['category'])
+        self.assertEqual(stored['summary'], '')
+        self.assertEqual(stored['content'], '수정된 민원 원문입니다.')
+        self.assertEqual(stored['analysis_state'], 'pending')
+        self.assertEqual(self.request('POST', '/api/complaints', json={'content': '  '}).status_code, 400)
+
+    def test_delete_during_embedding_discards_vector(self):
+        row = self.pending_submission()
+        async def scenario():
+            started, release = asyncio.Event(), asyncio.Event()
+            async def delayed(record):
+                started.set()
+                await release.wait()
+                return [0.0] * 1536
+            with patch('app.main.embedding', new=delayed):
+                task = asyncio.create_task(classify_submission(row['id'], row['analysis_revision']))
+                await asyncio.wait_for(started.wait(), 3)
+                self.assertEqual(fetch_one('SELECT analysis_state FROM complaints WHERE id=%s', (row['id'],))['analysis_state'], 'completed')
+                response = await asyncio.to_thread(self.request, 'DELETE', f"/api/complaints/{row['id']}")
+                self.assertEqual(response.status_code, 200)
+                release.set()
+                await asyncio.wait_for(task, 3)
+        asyncio.run(scenario())
+        self.assertIsNone(fetch_one('SELECT embedding FROM complaints WHERE id=%s', (row['id'],))['embedding'])
 
     def test_user_cancellation_stops_draft_and_hides_content(self):
         identifier = self.complaint()

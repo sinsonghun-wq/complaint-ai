@@ -305,6 +305,38 @@ textarea {
   border-radius: 10px;
   margin: 8px 0;
 }
+.list article {
+  flex-direction: column;
+  align-items: stretch;
+}
+.record-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+}
+.record-row > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.cancel-reason-editor {
+  padding: 16px;
+  border: 1px solid #dce5f4;
+  border-radius: 10px;
+  background: #f7f9fd;
+}
+.cancel-reason-editor label {
+  margin-top: 0;
+}
+.cancel-reason-editor textarea {
+  min-height: 100px;
+}
+@media (max-width: 600px) {
+  .record-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
 .source-filter {
   display: flex;
   flex-wrap: wrap;
@@ -441,6 +473,10 @@ footer .danger {
   gap: 7px;
   align-items: center;
 }
+.compose-actions {
+  justify-content: flex-end;
+}
+
 .actions button:not(.primary),
 .record-actions button:not(.primary) {
   border: 1px solid #d2ddec;

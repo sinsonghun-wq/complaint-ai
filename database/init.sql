@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS complaints (
   source_row INTEGER,
   content_fingerprint CHAR(64),
   processing_mode TEXT NOT NULL DEFAULT 'fallback',
+  analysis_state TEXT NOT NULL DEFAULT 'completed',
+  analysis_revision INTEGER NOT NULL DEFAULT 0,
   llm_model TEXT,
   embedding_model TEXT,
   prompt_version TEXT,
@@ -46,6 +48,8 @@ ALTER TABLE complaints ADD COLUMN IF NOT EXISTS cancelled_by_role TEXT;
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS parent_complaint_id BIGINT REFERENCES complaints(id) ON DELETE SET NULL;
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS previous_context JSONB;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS analysis_state TEXT NOT NULL DEFAULT 'completed';
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS analysis_revision INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS source_files (
   id UUID PRIMARY KEY,
