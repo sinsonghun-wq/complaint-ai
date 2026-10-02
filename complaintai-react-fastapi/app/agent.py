@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import logging
 import re
@@ -35,16 +36,26 @@ class ChatResponseBody(BaseModel):
 # --- 툴 정의 ---
 @tool
 async def aiFAQ() -> ChatResponseBody:
-    """민원인의 일반적인 질의에는 LLM 모델이 직접 답변합니다."""
+    """민원 처리와 관련 없는 질문에 대해서는 LLM 모델이 직접 답변합니다."""
     return ChatResponseBody(code=0)
 
 @tool
-def insertRequest():
+def insertRequest(title:str,content:str):
     """
     사용자가 민원 접수를 원하거나 접수 의사를 표현할 경우 접수를 진행할 수 있는 form을 좌측에 띄워줍니다.
-    사용자에게 좌측의 form을 작성하여 접수를 진행해달라는 안내문구를 제공합니다.
+    form은 민원의 제목을 나타내는 title과 민원의 내용을 나타내는 content로 이루어져 있습니다.
+    사용자가 구체적인 접수의 내용을 입력했는지에 따라 다른 방식으로 민원인을 돕습니다.
+    
+    만약, 사용자가 구체적인 접수의 내용을 입력했다면 좌측에 title과 content로 구성된 form을 채워주고 민원인에게 보여줍니다.
+    반대로, 사용자가 구체적인 접수의 내용을 입력하지 않았다면 title과 content는 공백('')이됩니다.
+    그런 경우에는 비어있는 form을 좌측에 보여줍니다.
+    
+    사용자에게 생성된 form을 확인하고, 마음에 들면 '접수' 버튼을 눌러 접수를 진행해달라고 안내합니다.
+    마음에 들지 않을 경우 form을 직접 수정한 후 접수를 진행할 수 있음을 안내합니다.
     """
-    return ChatResponseBody(code=1)
+
+
+    return ChatResponseBody(code=1,result=[(title,content)])
 
 @tool
 def responseComplaintT(message: str):
@@ -65,7 +76,7 @@ async def selectComplaintT(content: str, is_described: bool, config: RunnableCon
         예를 들어 단순히 민원인이 '민원 삭제할래'라고 말했다면 이건 어떤 민원을 삭제할지 모르므로 is_described는 false가 되어야 합니다.
         is_described이 True일 경우에는 민원 내용을 유사도 검색을 통해 DB에서 관련 민원들을 최대 3개까지 가져옵니다.
         가져온 민원 목록은 민원인이 보고있는 화면 좌측에 보여지는데, 그 목록은 수정 및 삭제가 가능한 목록입니다.
-        따라서, 민원인에게 좌측의 민원 목록을 통해 수정 및 삭제가 가능함을 안내합니다.
+        따라서, 민원인에게 좌측의 민원 목록을 통해 수정 및 삭제가 가능함만 안내합니다.
         is_described이 False일 경우에는 아래 내용을 따릅니다.
         만약 민원인이 어떤 민원을 처리하고 싶은지 묘사하지 않았다면 처리하고 싶은 민원의 내용만 묻습니다.
         내용의 유사도에 대한 검색만 지원하고 ID를 이용한 검색은 지원하지 않기 때문에 절대로 ID및 번호는 묻지 않습니다.
@@ -157,44 +168,12 @@ async def llm_worker(agent_executor):
 
 
 def parse_tool_output(tool_output):
-    """툴 출력이 객체, 딕셔너리, ToolMessage, 문자열 등 어떤 형태든 안전하게 code와 result를 추출하는 함수"""
-    code = 0
-    result = []
-    
-    if not tool_output:
-        return code, result
+    """code와 result를 추출하는 함수"""
+    content_str = tool_output.content  
 
-    # 1. ChatResponseBody 객체인 경우
-    if isinstance(tool_output, ChatResponseBody):
-        return tool_output.code, tool_output.result if tool_output.result is not None else []
-    
-    # 2. 딕셔너리인 경우
-    if isinstance(tool_output, dict):
-        return tool_output.get("code", 0), tool_output.get("result", [])
-        
-    # 3. code 속성을 직접 가진 객체인 경우
-    if hasattr(tool_output, "code"):
-        return getattr(tool_output, "code", 0), getattr(tool_output, "result", [])
-        
-    # 4. ToolMessage 등 .content 속성을 가진 객체이거나 문자열인 경우
-    content = None
-    if hasattr(tool_output, "content"):
-        content = tool_output.content
-    elif isinstance(tool_output, str):
-        content = tool_output
-        
-    if content is not None:
-        if isinstance(content, dict):
-            return content.get("code", 0), content.get("result", [])
-        elif isinstance(content, str):
-            # 정규식을 사용하여 content 문자열 안에서 code=숫자 패턴 추출 (예: 'code=1 ...')
-            code_match = re.search(r'code\s*=\s*(\d+)', content)
-            if code_match:
-                code = int(code_match.group(1))
-                
-            # result 리스트 추출 시도 (필요시 정규식 보강 가능)
-            if "result=[]" in content or "result=None" in content:
-                result = []
+    #"code=1 message=None result=[('', '')]"
+    code = ast.literal_eval(content_str.split('code=')[1].split(' ')[0])
+    result = ast.literal_eval(content_str.split('result=')[1])
                 
     return code, result
 
@@ -214,7 +193,7 @@ async def lifespan(app: FastAPI):
     global worker_task
     tools = [aiFAQ, insertRequest, selectComplaintT, responseComplaintT]
     #기존에 쓰던 qwen2.5:7b-instruct의 경우 추론이 실패한 경우가 많아 다양한 모델로 테스트중
-    llm = ChatOllama(model="qwen3:8b", temperature=0.1)
+    llm = ChatOllama(model="gemma4:e4b", temperature=0.1)
 
     memory = MemorySaver()
 

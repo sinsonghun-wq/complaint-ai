@@ -22,8 +22,14 @@ CSV_MAX_UPLOAD_BYTES = int(os.getenv("CSV_MAX_UPLOAD_BYTES", str(1024 * 1024 * 1
 DOCUMENT_MAX_UPLOAD_BYTES = int(os.getenv("DOCUMENT_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:7b-instruct")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
-LLM_TIMEOUT_MS = int(os.getenv("LLM_TIMEOUT_MS", "25000"))
-LLM_IMPORT_ENABLED = os.getenv("LLM_IMPORT_ENABLED", "false").lower() == "true"
+LLM_TIMEOUT_MS = int(os.getenv("LLM_TIMEOUT_MS", "60000"))
+LLM_IMPORT_ENABLED = os.getenv("LLM_IMPORT_ENABLED", "true").lower() == "true"
+LLM_IMPORT_CONCURRENCY = max(1, int(os.getenv("LLM_IMPORT_CONCURRENCY", "1")))
+CSV_LLM_CONFIDENCE_THRESHOLD = min(1.0, max(0.0, float(os.getenv("CSV_LLM_CONFIDENCE_THRESHOLD", "0.5"))))
+CSV_RULE_OTHER_MIN_CONTENT_CHARS = max(1, int(os.getenv("CSV_RULE_OTHER_MIN_CONTENT_CHARS", "80")))
+IMPORT_PROGRESS_ROWS = max(1, int(os.getenv("IMPORT_PROGRESS_ROWS", "10")))
+IMPORT_HEARTBEAT_TIMEOUT_SECONDS = max(60, int(os.getenv("IMPORT_HEARTBEAT_TIMEOUT_SECONDS", "300")))
+IMPORT_WORKER_POLL_SECONDS = max(1, int(os.getenv("IMPORT_WORKER_POLL_SECONDS", "2")))
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "ollama")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B")
 OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "qwen3-embedding:4b")

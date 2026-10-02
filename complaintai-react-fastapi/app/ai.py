@@ -68,6 +68,28 @@ def fingerprint(content: str) -> str:
     return hashlib.sha256(clean(content).encode()).hexdigest()
 
 
+async def infer_csv_mapping(headers: list[str], samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Ask the LLM once per previously unseen CSV schema; callers validate the result."""
+    safe_headers = [clean(header)[:120] for header in headers if clean(header)]
+    safe_samples = [{header: redact(row.get(header, ""))[:240] for header in safe_headers} for row in samples[:5]]
+    instruction = """당신은 CSV 민원 데이터의 열 매핑을 판단한다. 제공된 헤더와 예시 행만 사용한다.
+민원 제목 열은 짧은 사건명·질문명이다. 민원 본문 열은 민원인의 신청·문의·불편 내용을 가진다.
+답변 열과 처리결과·내부메모 열은 본문에 넣지 않는다. 분류 열은 기존 업무 분류가 있을 때만 선택한다.
+반드시 아래 JSON만 반환한다. 모든 열 이름은 제공된 headers 중 정확히 하나여야 한다.
+{"title_column":"", "content_columns":[""], "response_column":"", "category_column":"", "confidence":0.0, "reason":""}"""
+    try:
+        async with httpx.AsyncClient(timeout=LLM_TIMEOUT_MS / 1000) as client:
+            response = await client.post(
+                f"{OLLAMA_URL}/api/chat",
+                json={"model": LLM_MODEL, "stream": False, "format": "json", "options": {"temperature": 0}, "messages": [{"role": "user", "content": f"{instruction}\n\nheaders:\n{json.dumps(safe_headers, ensure_ascii=False)}\n\nsamples:\n{json.dumps(safe_samples, ensure_ascii=False)}"}]},
+            )
+            response.raise_for_status()
+            result = json.loads(response.json()["message"]["content"].replace("```json", "").replace("```", "").strip())
+        return {"title_column": clean(result.get("title_column")), "content_columns": [clean(value) for value in result.get("content_columns", []) if clean(value)], "response_column": clean(result.get("response_column")), "category_column": clean(result.get("category_column")), "confidence": float(result.get("confidence", 0)), "reason": clean(result.get("reason")), "source": "llm"}
+    except Exception as error:
+        return {"title_column": "", "content_columns": [], "response_column": "", "category_column": "", "confidence": 0.0, "reason": f"헤더 매핑 LLM을 사용할 수 없습니다. ({error})", "source": "unavailable"}
+
+
 def embedding_document(record: dict[str, Any]) -> str:
     return f"민원 제목: {record['title']}\n민원 원문: {record['content']}\n민원 요약: {record['summary']}\n분류 카테고리: {record['category']}\n핵심어: {', '.join(record.get('keywords') or [])}"
 
@@ -79,7 +101,7 @@ async def embedding(record: dict[str, Any]) -> list[float] | None:
     text = embedding_document(record)
     try:
         # 대량 CSV에서 로컬 임베딩 서버가 꺼졌을 때 행마다 45초씩 대기하지 않는다.
-        async with httpx.AsyncClient(timeout=min(EMBEDDING_TIMEOUT_MS / 1000, 5)) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             if EMBEDDING_PROVIDER == "ollama":
                 response = await client.post(f"{OLLAMA_URL}/api/embed", json={"model": OLLAMA_EMBEDDING_MODEL, "input": text, "keep_alive": "10m"})
                 response.raise_for_status(); vector = response.json().get("embeddings", [None])[0]
@@ -94,6 +116,7 @@ async def embedding(record: dict[str, Any]) -> list[float] | None:
     except Exception:
         _embedding_unavailable_until = time.monotonic() + 30
         return None
+
 
 """
 중복되는 코드가 많지만, 기존 코드는 최대한 건드리지 않기 위해 따로 만들었습니다.
