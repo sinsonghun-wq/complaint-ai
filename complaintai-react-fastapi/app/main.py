@@ -15,10 +15,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
+from fastapi.security import APIKeyHeader
 import pandas as pd
 import psycopg
 from openpyxl import load_workbook
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,7 +32,8 @@ from .security import actor_from_auth, current_account, issue_token, password_ha
 from .worker_manager import ensure_csv_worker
 from .settings import CSV_LLM_CONFIDENCE_THRESHOLD, CSV_MAX_UPLOAD_BYTES, CSV_RULE_OTHER_MIN_CONTENT_CHARS, DOCUMENT_MAX_UPLOAD_BYTES, FILE_STORAGE_DIR, IMPORT_PROGRESS_ROWS, LLM_IMPORT_CONCURRENCY, LLM_IMPORT_ENABLED, MAX_BATCH_SIZE, TESSDATA_DIR, TESSERACT_CMD, WEB_ORIGINS
 
-app = FastAPI(title="ComplaintAI FastAPI", version="1.0.0")
+auth_header = APIKeyHeader(name="Authorization", auto_error=False)
+app = FastAPI(title="ComplaintAI FastAPI", version="1.0.0",dependencies=[Depends(auth_header)], lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=WEB_ORIGINS if WEB_ORIGINS != ["*"] else ["*"], allow_credentials=WEB_ORIGINS != ["*"], allow_methods=["*"], allow_headers=["*"])
 
 DEPARTMENT_CATEGORIES = {category: [category] for category in CATEGORIES}
@@ -1293,4 +1295,14 @@ def react_app(path: str, request: Request):
         if path and candidate.is_file(): return FileResponse(candidate)
         return FileResponse(STATIC_DIR / "index.html")
     raise HTTPException(404, "React 빌드 결과가 없습니다. frontend에서 npm run build를 실행하세요.")
+
+class ChatRequestBody(BaseModel):
+    content: str
+
+@app.post("/api/chat", response_model=ChatResponseBody)
+async def chatAI(chatBody: ChatRequestBody, actor: Annotated[dict, Depends(actor_from_auth)]):
+    user_id = actor["owner_id"]
+    # 큐에 요청을 넣고 워커가 처리 완료하여 Future에 결과를 담을 때까지 비동기 대기
+    result = await enqueue_chat_request(user_id, chatBody.content)
+    return result
 

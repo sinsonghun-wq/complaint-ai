@@ -116,3 +116,19 @@ async def embedding(record: dict[str, Any]) -> list[float] | None:
     except Exception:
         _embedding_unavailable_until = time.monotonic() + 30
         return None
+
+
+"""
+중복되는 코드가 많지만, 기존 코드는 최대한 건드리지 않기 위해 따로 만들었습니다.
+사용자가 민원을 찾고 싶을 때 오직 content로만 유사도 검색을 하기 위한 함수
+"""
+async def embeddingForSelect(text:str):
+    response =None
+    async with httpx.AsyncClient(timeout=max(EMBEDDING_TIMEOUT_MS / 1000, 5)) as client:
+        response =  await client.post(f"{OLLAMA_URL}/api/embed", json={"model": OLLAMA_EMBEDDING_MODEL, "input": text, "keep_alive": "10m"})
+    response.raise_for_status(); vector = response.json().get("embeddings", [None])[0]
+    if not isinstance(vector, list) or len(vector) < 1536:
+                return None
+    vector = [float(value) for value in vector[:1536]]
+    norm = math.sqrt(sum(value * value for value in vector))
+    return [value / norm for value in vector] if norm else vector
