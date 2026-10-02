@@ -49,6 +49,8 @@ docker exec complaintai-db pg_restore -U complaintai -d complaintai --data-only 
 
 ## 데이터 없이 새 개발 환경 구성
 
+현재 부서는 노동, 기업, 교통, 주택·건축, 환경·위생, 건설·국토, 문화·행정·안전, 보건·복지, 기타다. 기존 7개 관리자 교체는 `complaintai-react-fastapi/scripts/migrate_to_nine_departments.py --apply`로 수행한다. 이 이전 작업에서는 `init.sql`을 실행하지 않는다(기존 민원·일반 사용자 유지).
+
 빈 Docker 볼륨에서는 Compose가 `01-init.sql` → `02-seed-demo-accounts.sql` 순서로 실행한다. 이미 있는 볼륨에서는 자동으로 재실행되지 않는다.
 
 수동 초기화 후 테스트 계정이 필요하면 `seed_demo_accounts.sql`을 별도로 실행한다. 데이터 동기화 예정이라면 이 파일을 실행하지 않는다.

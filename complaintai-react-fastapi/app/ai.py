@@ -6,21 +6,16 @@ import math
 import re
 import time
 from typing import Any
+from pathlib import Path
 
 import httpx
 
 from .settings import EMBEDDING_API_URL, EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT_MS, LLM_MODEL, LLM_TIMEOUT_MS, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
 
-CATEGORIES = ["행정·안전", "국토·교통", "주택건축", "환경·위생", "보건복지", "소방", "기타"]
-KEYWORDS = {
-    "행정·안전": ["행정", "안전", "생활서비스", "민원행정", "재난", "안전사고", "공공서비스"],
-    "국토·교통": ["주차", "차량", "교통", "불법 주정차", "버스", "택시", "횡단보도", "등하교", "도로", "보도", "가로등", "시설", "포트홀", "인도", "표지판"],
-    "주택건축": ["주택", "아파트", "건축", "공사", "재개발", "건물", "누수"],
-    "환경·위생": ["쓰레기", "악취", "소음", "위생", "환경", "폐기물", "미세먼지"],
-    "보건복지": ["복지", "의료", "보건", "돌봄", "장애", "노인", "지원"],
-    "소방": ["화재", "소방", "소화전", "피난", "불법 적치", "위험물"],
-    "기타": [],
-}
+DEPARTMENTS = json.loads(Path(__file__).with_name('departments.json').read_text(encoding='utf-8'))
+CATEGORIES = [item['name'] for item in DEPARTMENTS]
+KEYWORDS = {item['name']: item['keywords'] for item in DEPARTMENTS}
+DEPARTMENT_GUIDANCE = '\n'.join(f"- {item['name']}: {item['description']}" for item in DEPARTMENTS)
 _embedding_unavailable_until = 0.0
 
 
@@ -38,14 +33,14 @@ def fallback(title: str, content: str, reason: str = "LLM을 사용할 수 없�
     content = redact(content)
     sentences = re.findall(r"[^.!?。]+[.!?。]?", content) or [content]
     summary = clean(" ".join(sentences[:3]))[:700]
-    source = f"{title} {summary}".lower()
+    source = f"{title} {content}".lower()
     ranked = sorted(((category, sum(word in source for word in words)) for category, words in KEYWORDS.items()), key=lambda item: item[1], reverse=True)
     category, score = ranked[0]
-    return {"title": clean(title) or summary[:40] or "제목 없음", "content": content, "summary": summary, "key_points": ["민원 대상과 발생 상황 확인", "생활 불편 및 안전 문제 검토", "민원인의 요청사항 확인"], "urgency": "high" if re.search(r"위험|사고|긴급|화재|붕괴", content) else "medium", "needs_review": len(content) < 20, "review_reason": "내용이 부족하여 검토가 필요합니다." if len(content) < 20 else None, "category": category if score else "기타", "confidence": 0.8 if score >= 3 else (0.6 if score else 0.3), "reason": reason, "keywords": KEYWORDS[category][:5] if score else [], "processing_mode": "fallback", "model": None, "prompt_version": "complaintai-ko-v1"}
+    return {"title": clean(title) or summary[:40] or "제목 없음", "content": content, "summary": summary, "key_points": ["민원 대상과 발생 상황 확인", "생활 불편 및 안전 문제 검토", "민원인의 요청사항 확인"], "urgency": "high" if re.search(r"위험|사고|긴급|화재|붕괴", content) else "medium", "needs_review": len(content) < 20, "review_reason": "내용이 부족하여 검토가 필요합니다." if len(content) < 20 else None, "category": category if score else "기타", "confidence": 0.8 if score >= 3 else (0.6 if score else 0.3), "reason": reason, "keywords": KEYWORDS[category][:5] if score else [], "processing_mode": "fallback", "model": None, "prompt_version": "complaintai-ko-nine-v2"}
 
 
 def prompt(title: str, content: str) -> str:
-    return f"당신은 대한민국 민원 데이터를 정확하고 중립적으로 처리하는 AI다. 원문에 없는 사실·기관·법령·해결책·날짜를 만들지 말고 개인정보는 [개인정보 제외]로 처리한다. 허용 category 중 하나만 고른다: {', '.join(CATEGORIES)}. JSON만 반환한다. {{\"title\":\"짧은 제목\",\"summary\":\"2~4문장 요약\",\"key_points\":[\"핵심 쟁점\"],\"urgency\":\"low|medium|high\",\"needs_review\":false,\"review_reason\":null,\"category\":\"허용 category\",\"confidence\":0.0,\"reason\":\"분류 근거 한 문장\",\"keywords\":[\"핵심어\"]}}\n\n민원 제목:\n{clean(title)}\n\n민원 원문:\n{redact(content)}"
+    return f"당신은 대한민국 민원 데이터를 정확하고 중립적으로 처리하는 AI다. 원문에 없는 사실·기관·법령·해결책·날짜를 만들지 말고 개인정보는 [개인정보 제외]로 처리한다. 허용 category 중 하나만 고른다: {', '.join(CATEGORIES)}. 민원인의 가장 직접적인 요청에 따라 하나만 선택한다. 여러 분야면 시급한 핵심 요청을 우선하며, 법률 민원은 법률이 적용되는 분야로 분류한다. 확신이 낮으면 needs_review=true로 표시한다. 부서별 기준:\n{DEPARTMENT_GUIDANCE}\nJSON만 반환한다. {{\"title\":\"짧은 제목\",\"summary\":\"2~4문장 요약\",\"key_points\":[\"핵심 쟁점\"],\"urgency\":\"low|medium|high\",\"needs_review\":false,\"review_reason\":null,\"category\":\"허용 category\",\"confidence\":0.0,\"reason\":\"분류 근거 한 문장\",\"keywords\":[\"핵심어\"]}}\n\n민원 제목:\n{clean(title)}\n\n민원 원문:\n{redact(content)}"
 
 
 async def analyze(title: str, content: str) -> dict[str, Any]:

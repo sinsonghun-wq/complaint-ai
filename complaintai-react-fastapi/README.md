@@ -14,17 +14,13 @@
 
 ## 현재 부서·분류 체계
 
-- 행정·안전
-- 국토·교통
-- 주택건축
-- 환경·위생
-- 보건복지
-- 소방
-- 기타
+노동 / 기업 / 교통 / 주택·건축 / 환경·위생 / 건설·국토 / 문화·행정·안전 / 보건·복지 / 기타
 
-`국토·교통`은 기존 `교통·주차`와 `도로·시설물`을 통합한 분류다. 법률은 독립 분류하지 않으며, 새 민원은 실제 내용의 담당 분야로 분류한다. 기존 법률 민원은 사후에 담당 분야를 안전하게 판단할 수 없으므로 `기타`로 이전한다.
+`app/departments.json`을 백엔드와 React가 함께 읽는다. 분류 카테고리, 부서별 권한, 전달 목록, LLM 프롬프트·규칙 기반 분류가 이 목록을 사용한다. 교통은 차량·운송·주차, 건설·국토는 도로·토목·기반시설, 주택·건축은 주거·건물 문제를 담당한다. 소방 역할은 문화·행정·안전이 인수한다. 모델 자체는 기존 qwen2.5:7b-instruct를 유지하며 새 부서 기준 프롬프트 버전은 complaintai-ko-nine-v2다. 모델 파인튜닝을 수행한 것은 아니다.
 
-기존 데이터베이스를 7개 체계로 이전할 때는 `scripts/migrate_to_seven_departments.sql`을 실행한다. 이 스크립트는 기존 분류·부서 참조를 함께 바꾼다.
+기존 7개 부서 DB는 서버와 워커를 중단하고 `python scripts/migrate_to_nine_departments.py --apply`로 이전한다. 테이블 구조를 변경하거나 민원·일반 사용자 데이터를 지우지 않는다. 관리자 계정은 새 ID의 9개로 교체하며 기존 로그인 토큰은 무효가 된다. 기존 답변·문서 작성자와 작업 소유자 참조도 이전한다. 국토·교통은 원문 규칙으로 분리하고 판단이 불명확한 이전 결과는 analysis_metadata.department_migration.needs_review에 기록한다. 소방·행정·안전은 문화·행정·안전으로, 주택건축·보건복지는 새 표기로 이전한다. 기타 민원은 새 분야 규칙으로 재검토한다. 부서가 바뀐 기존 벡터는 오래된 부서명을 포함하므로 제거한다(별도 임베딩 재생성 필요). 작업이 분류 중이면 서버 시작 후 최신 부서 체계로 재처리한다.
+
+`migrate_to_seven_departments.sql`은 과거 이력용이며 현재 버전에 실행하면 안 된다.
 
 ## 테스트 계정
 
@@ -41,12 +37,14 @@
 
 | 계정 이름 | ID | 비밀번호 | 담당 부서 |
 | --- | --- | --- | --- |
-| 행정·안전 관리자 | `admin-administration-safety` | `AdminService!2026` | 행정·안전 |
-| 국토·교통 관리자 | `admin-land-transport` | `AdminLand!2026` | 국토·교통 |
-| 주택건축 관리자 | `admin-housing` | `AdminHousing!2026` | 주택건축 |
+| 노동 관리자 | `admin-labor` | `AdminLabor!2026` | 노동 |
+| 기업 관리자 | `admin-business` | `AdminBusiness!2026` | 기업 |
+| 교통 관리자 | `admin-traffic` | `AdminTraffic!2026` | 교통 |
+| 주택·건축 관리자 | `admin-housing` | `AdminHousing!2026` | 주택·건축 |
 | 환경·위생 관리자 | `admin-environment` | `AdminEnvironment!2026` | 환경·위생 |
-| 보건복지 관리자 | `admin-welfare` | `AdminWelfare!2026` | 보건복지 |
-| 소방 관리자 | `admin-fire` | `AdminFire!2026` | 소방 |
+| 건설·국토 관리자 | `admin-construction` | `AdminConstruction!2026` | 건설·국토 |
+| 문화·행정·안전 관리자 | `admin-culture-safety` | `AdminCulture!2026` | 문화·행정·안전 |
+| 보건·복지 관리자 | `admin-welfare` | `AdminWelfare!2026` | 보건·복지 |
 | 기타 관리자 | `admin-other` | `AdminOther!2026` | 기타 |
 
 ## 실행
@@ -130,7 +128,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 - 일반 사용자 업로드와 CSV 작업 완료 상태
 - 행별 분류 및 개인 카테고리 보관함 저장
 - 다른 일반 사용자의 목록 격리
-- 국토·교통 및 환경·위생 관리자 부서 처리 목록 표시
+- 9개 부서 관리자 처리 목록 및 부서별 접근 제한
 
 테스트 후 생성된 민원은 삭제된 데이터에 남기지 말고 영구 삭제한다.
 

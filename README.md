@@ -5,7 +5,7 @@
 ## 처음 실행하기
 
 1. Docker Desktop을 실행한 뒤 프로젝트 루트에서 `docker compose up -d`를 실행한다.
-2. 빈 PostgreSQL 볼륨이라면 `database/init.sql`이 스키마를 만들고, `database/seed_demo_accounts.sql`이 개발용 일반 사용자 2개와 관리자 7개를 생성한다.
+2. 빈 PostgreSQL 볼륨이라면 `database/init.sql`이 스키마를 만들고, `database/seed_demo_accounts.sql`이 개발용 일반 사용자 2개와 9개 부서 관리자 9개를 생성한다.
 3. `complaintai-react-fastapi/.env.example`을 `complaintai-react-fastapi/.env`로 복사한다.
 4. `complaintai-react-fastapi`에서 Python 의존성을 설치하고, `frontend`에서 `npm install` 후 `npm run build`를 실행한다.
 5. `complaintai-react-fastapi`에서 `uvicorn app.main:app --host 127.0.0.1 --port 8000`으로 실행한다.

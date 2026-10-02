@@ -69,7 +69,7 @@ class InitSchemaTests(unittest.TestCase):
     def test_seed_is_optional_and_reinitialization_works(self):
         self.db.execute((self.root / 'seed_demo_accounts.sql').read_text(encoding='utf-8'))
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM app_users WHERE account_role='user'").fetchone()[0], 2)
-        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM app_users WHERE account_role='admin'").fetchone()[0], 7)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM app_users WHERE account_role='admin'").fetchone()[0], 9)
         self.db.execute(self.init_sql)
         self.db.execute(self.init_sql)
         self.assertEqual(self.db.execute('SELECT COUNT(*) FROM app_users').fetchone()[0], 0)
@@ -87,6 +87,38 @@ class InitSchemaTests(unittest.TestCase):
             self.assertEqual(self.db.execute("SELECT to_regclass('public.complaint_responses') IS NOT NULL").fetchone()[0], True)
         finally:
             self.db.execute('DROP VIEW external_schema_test_view')
+
+    def test_department_migration_preserves_data_and_replaces_accounts(self):
+        from psycopg.rows import dict_row, tuple_row
+        from app.department_migration import ADMIN_ACCOUNTS, migrate_departments
+        from app.security import verify_password
+        old_departments = ['행정·안전', '국토·교통', '주택건축', '환경·위생', '보건복지', '소방', '기타']
+        old_admins = []
+        for department in old_departments:
+            identifier, owner = uuid.uuid4(), uuid.uuid4()
+            old_admins.append((identifier, owner))
+            self.db.execute("INSERT INTO app_users(id,owner_id,email,username,account_role,department) VALUES(%s,%s,%s,%s,'admin',%s)", (identifier, owner, str(identifier)+'@test.local', 'old-'+str(identifier), department))
+        user_id, user_owner = uuid.uuid4(), uuid.uuid4()
+        self.db.execute("INSERT INTO app_users(id,owner_id,email,username) VALUES(%s,%s,'ordinary@test.local','ordinary')", (user_id, user_owner))
+        complaint = self.db.execute("INSERT INTO complaints(title,content,category,owner_user_id,complaint_status) VALUES('버스 민원','버스 주차 교통신호','국토·교통',%s,'완료') RETURNING id", (user_owner,)).fetchone()[0]
+        response_id = uuid.uuid4()
+        self.db.execute("INSERT INTO complaint_responses(id,complaint_id,author_user_id,department,content) VALUES(%s,%s,%s,'국토·교통','보존할 답변')", (response_id, complaint, old_admins[1][0]))
+        self.db.execute("INSERT INTO department_documents(id,document_id,department,title,original_name,version,storage_path,content,created_by) VALUES(%s,%s,'국토·교통','도로 공사','test.txt',1,'/test','도로 포트홀 교량',%s)", (uuid.uuid4(), uuid.uuid4(), old_admins[1][0]))
+        self.db.execute("INSERT INTO import_jobs(id,source_file,status,owner_user_id) VALUES(%s,'test.csv','queued',%s)", (uuid.uuid4(), old_admins[1][1]))
+        self.db.row_factory = dict_row
+        result = migrate_departments(self.db)
+        self.assertEqual(result['deleted_admins'], 7)
+        self.assertEqual(result['created_admins'], 9)
+        self.assertEqual(self.db.execute('SELECT owner_user_id FROM complaints WHERE id=%s', (complaint,)).fetchone()['owner_user_id'], user_owner)
+        self.assertEqual(self.db.execute('SELECT category,complaint_status FROM complaints WHERE id=%s', (complaint,)).fetchone(), {'category':'교통','complaint_status':'완료'})
+        answer = self.db.execute('SELECT content,department FROM complaint_responses WHERE id=%s', (response_id,)).fetchone()
+        self.assertEqual(answer, {'content':'보존할 답변','department':'교통'})
+        for department, username, password in ADMIN_ACCOUNTS:
+            account = self.db.execute('SELECT * FROM app_users WHERE username=%s', (username,)).fetchone()
+            self.assertEqual(account['department'], department)
+            self.assertTrue(verify_password(password, account['password_salt'], account['password_hash']))
+        self.assertTrue(migrate_departments(self.db)['already_migrated'])
+        self.db.row_factory = tuple_row
 
 
 if __name__ == '__main__':
