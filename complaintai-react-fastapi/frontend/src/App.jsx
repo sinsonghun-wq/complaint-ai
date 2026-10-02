@@ -414,7 +414,7 @@ function ComplaintList({ records, total, page, pageSize, setPage, setPageSize, s
       const cancelled = record.complaint_status === "취소";
       return <article key={record.id} className={!record.submitted_by_user ? "file-complaint" : "user-complaint"}><div className="record-row"><div>
         <h3>{record.title}</h3><small><span className="source-badge">{record.submitted_by_user ? "민원인 작성" : "파일 업로드"}</span> {record.category || "부서 판별중..."} · 상태: <b>{statusLabel(record.complaint_status)}</b> · {new Date(record.created_at).toLocaleDateString()}</small>
-        {cancelled ? <div className="answer cancellation" role="status"><b>{record.cancelled_by_role === "user" ? "민원인이 해당 민원을 취소했습니다." : "민원이 취소되었습니다."}</b>{record.cancelled_by_role === "admin" && <p>취소 사유: {record.cancellation_reason || "관리자에 의해 취소되었습니다."}{user && " 해당 이유로 인해 민원이 취소되었습니다."}</p>}</div> : <>
+        {cancelled ? <div className="answer cancellation" role="status"><b>{record.cancelled_by_role === "user" ? "민원인이 해당 민원을 취소했습니다." : "민원이 취소되었습니다."}</b>{record.cancelled_by_role === "admin" && <p>취소 사유: {record.cancellation_reason || "사유가 기록되지 않았습니다."}</p>}</div> : <>
           {user ? <p className="original">{record.content}</p> : <><p>{record.summary}</p><details><summary>원본 민원 확인</summary><p className="original">{record.content}</p></details></>}
           <PreviousContext context={record.previous_context} />
           {record.latest_response && <div className={record.latest_response_state === "draft" ? "answer draft-answer" : "answer"}><b>{record.latest_response_state === "draft" ? "임시 저장 답변 · 관리자만 확인 가능" : "답변 완료"}</b><p className="original">{record.latest_response}</p></div>}
