@@ -15,6 +15,10 @@ body {
   min-height: 100vh;
 }
 aside {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
   background: #152543;
   color: #dce8fb;
   padding: 26px 16px;
@@ -60,8 +64,39 @@ aside button.active {
   background: #29436f;
   color: #fff;
 }
-.account {
+.sidebar-bottom {
   margin-top: auto;
+}
+.import-progress {
+  padding: 14px 8px 18px;
+  display: grid;
+  gap: 8px;
+  color: #dce8fb;
+}
+.import-progress-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+.import-progress-heading strong { color: #88d8ff; }
+.import-progress-track {
+  height: 9px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: #354767;
+}
+.import-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #70cfff;
+  transition: width 0.3s ease;
+}
+.import-progress small { color: #b0c3df; font-size: 11px; }
+.import-progress.completed .import-progress-fill { background: #4ade80; }
+.import-progress.completed .import-progress-heading strong { color: #4ade80; }
+.import-progress-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account {
   display: grid;
   gap: 5px;
   border-top: 1px solid #365274;
@@ -139,6 +174,15 @@ header input {
 .category {
   margin-bottom: 20px;
 }
+.category-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.category-head h2 {
+  margin: 0 0 16px;
+}
 .grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -156,6 +200,19 @@ header input {
 .grid button.selected {
   border-color: #5e82ff;
   background: #edf2ff;
+}
+.grid button.department-owned {
+  border-color: #86d8ee;
+  background: #e9f9ff;
+  color: #135a73;
+}
+.grid button.department-owned.selected {
+  border-color: #38bde3;
+  background: #d8f5ff;
+  box-shadow: 0 0 0 1px #b4ebfa;
+}
+.grid button.department-owned b {
+  color: #1683a5;
 }
 .grid i {
   font-style: normal;
@@ -242,6 +299,75 @@ textarea {
   padding: 15px 0;
   border-bottom: 1px solid #e5ecf7;
 }
+.list article.file-complaint {
+  background: #f2f3f5;
+  padding: 15px;
+  border-radius: 10px;
+  margin: 8px 0;
+}
+.list article {
+  flex-direction: column;
+  align-items: stretch;
+}
+.record-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+}
+.record-row > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.cancel-reason-editor {
+  padding: 16px;
+  border: 1px solid #dce5f4;
+  border-radius: 10px;
+  background: #f7f9fd;
+}
+.cancel-reason-editor label {
+  margin-top: 0;
+}
+.cancel-reason-editor textarea {
+  min-height: 100px;
+}
+@media (max-width: 600px) {
+  .record-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+.source-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.source-filter button {
+  border: 1px solid #cfd9eb;
+  background: #fff;
+  color: #34517e;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.source-filter button.selected {
+  background: #edf2ff;
+  border-color: #5e82ff;
+  color: #3457b3;
+}
+.source-filter small {
+  color: #65758e;
+}
+.source-badge {
+  display: inline-block;
+  padding: 3px 7px;
+  border: 1px solid #d4dbe5;
+  border-radius: 5px;
+  color: #40516e;
+  margin-right: 5px;
+}
 .list p,
 .work p {
   margin: 5px 0;
@@ -266,6 +392,10 @@ footer button {
 .list .danger {
   border-color: #ffc8c8;
   color: #b43232;
+}
+.read-only {
+  color: #738198;
+  font-size: 13px;
 }
 footer .danger {
   border-color: #ffc8c8;
@@ -343,6 +473,10 @@ footer .danger {
   gap: 7px;
   align-items: center;
 }
+.compose-actions {
+  justify-content: flex-end;
+}
+
 .actions button:not(.primary),
 .record-actions button:not(.primary) {
   border: 1px solid #d2ddec;
@@ -430,6 +564,29 @@ footer .danger {
 .completion p {
   margin-top: 0;
 }
+.csv-mapping {
+  display: grid;
+  gap: 14px;
+}
+.csv-mapping fieldset {
+  border: 1px solid #d2ddec;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.csv-mapping legend {
+  color: #34517e;
+  font-weight: 700;
+}
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 5px 12px 5px 0;
+  font-size: 14px;
+}
+.checkbox-row input {
+  width: auto;
+}
 footer {
   display: flex;
   align-items: center;
@@ -446,6 +603,8 @@ footer span {
     grid-template-columns: 1fr;
   }
   aside {
+    position: static;
+    height: auto;
     min-height: auto;
     flex-direction: row;
     flex-wrap: wrap;
@@ -453,6 +612,10 @@ footer span {
   }
   .brand {
     margin: 0 12px 0 0;
+  }
+  .sidebar-bottom {
+    width: 100%;
+    margin-top: 8px;
   }
   .account {
     margin: 0 0 0 auto;

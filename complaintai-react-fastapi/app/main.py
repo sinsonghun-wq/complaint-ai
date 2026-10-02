@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import csv
 import hashlib
 import json
@@ -25,11 +26,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
-from app.agent import ChatResponseBody, enqueue_chat_request, lifespan
-
 from .ai import CATEGORIES, analyze, embedding, fallback, fingerprint, infer_csv_mapping
 from .db import connection, fetch_all, fetch_one
 from .security import actor_from_auth, current_account, issue_token, password_hash, public_user, uuid4, verify_password
+from .worker_manager import ensure_csv_worker
 from .settings import CSV_LLM_CONFIDENCE_THRESHOLD, CSV_MAX_UPLOAD_BYTES, CSV_RULE_OTHER_MIN_CONTENT_CHARS, DOCUMENT_MAX_UPLOAD_BYTES, FILE_STORAGE_DIR, IMPORT_PROGRESS_ROWS, LLM_IMPORT_CONCURRENCY, LLM_IMPORT_ENABLED, MAX_BATCH_SIZE, TESSDATA_DIR, TESSERACT_CMD, WEB_ORIGINS
 
 auth_header = APIKeyHeader(name="Authorization", auto_error=False)
@@ -40,6 +40,8 @@ DEPARTMENT_CATEGORIES = {category: [category] for category in CATEGORIES}
 STATUSES = ["접수", "진행중", "완료", "취소"]
 STATIC_DIR = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 FILE_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+classification_slots = asyncio.Semaphore(1)
+classification_tasks: set[asyncio.Task] = set()
 
 
 class LoginBody(BaseModel):
@@ -236,8 +238,6 @@ def spreadsheet_records(path: Path, suffix: str) -> list[dict[str, Any]]:
             for worksheet in workbook.worksheets:
                 rows = [(number, list(values)) for number, values in enumerate(worksheet.iter_rows(values_only=True), start=1)]
                 records.extend(_records_from_rows(rows, worksheet.title))
-                if len(records) >= MAX_BATCH_SIZE:
-                    break
         finally:
             workbook.close()
     else:
@@ -246,9 +246,7 @@ def spreadsheet_records(path: Path, suffix: str) -> list[dict[str, Any]]:
         for sheet_name, frame in sheets.items():
             rows = [(number, row) for number, row in enumerate(frame.fillna("").values.tolist(), start=1)]
             records.extend(_records_from_rows(rows, str(sheet_name)))
-            if len(records) >= MAX_BATCH_SIZE:
-                break
-    return records[:MAX_BATCH_SIZE]
+    return records
 
 
 def _text_quality(text: str, required_markers: tuple[str, ...] = ()) -> float:
@@ -359,7 +357,7 @@ def _records_from_case_pages(pages: list[tuple[str, float, float]], filename: st
         if title and body:
             records.append({"source_row": page_number, "source_case": heading.group(1), **fallback(title, body)})
     if records:
-        return records[:MAX_BATCH_SIZE]
+        return records
     combined = "\n".join(text for text, _, _ in pages).strip()
     return [{"source_row": 1, **fallback(Path(filename).stem, combined)}] if combined else []
 
@@ -378,7 +376,7 @@ def _records_from_hwp_text(text: str, filename: str) -> list[dict[str, Any]]:
         if title and body:
             records.append({"source_row": int(heading.group(1)), "source_case": heading.group(1), **fallback(title, body)})
     if records:
-        return records[:MAX_BATCH_SIZE]
+        return records
     return _records_from_case_pages([(text, _text_quality(text, ("신청원인",)), 0.0)], filename)
 
 
@@ -448,7 +446,7 @@ async def save_records(records: list[dict[str, Any]], actor: dict[str, Any], sou
 
 
 @app.on_event("startup")
-def startup() -> None:
+async def startup() -> None:
     # 이전 설치 DB도 답변 임시 저장 상태를 바로 사용할 수 있도록 호환 컬럼을 보완한다.
     with connection() as conn:
         with conn.cursor() as cur:
@@ -461,7 +459,77 @@ def startup() -> None:
             cur.execute("ALTER TABLE complaints ADD COLUMN IF NOT EXISTS cancellation_reason TEXT")
             cur.execute("ALTER TABLE complaints ADD COLUMN IF NOT EXISTS parent_complaint_id BIGINT REFERENCES complaints(id) ON DELETE SET NULL")
             cur.execute("ALTER TABLE complaints ADD COLUMN IF NOT EXISTS previous_context JSONB")
+            cur.execute("ALTER TABLE complaints ADD COLUMN IF NOT EXISTS analysis_state TEXT NOT NULL DEFAULT 'completed'")
+            cur.execute("ALTER TABLE complaints ADD COLUMN IF NOT EXISTS analysis_revision INTEGER NOT NULL DEFAULT 0")
+            cur.execute("UPDATE complaints SET analysis_state='pending' WHERE analysis_state='processing' AND deleted_at IS NULL AND complaint_status='접수'")
         conn.commit()
+    for row in fetch_all("SELECT id,analysis_revision FROM complaints WHERE analysis_state='pending' AND deleted_at IS NULL AND complaint_status='접수'"):
+        task = asyncio.create_task(classify_submission(row['id'], row['analysis_revision']))
+        classification_tasks.add(task)
+        task.add_done_callback(classification_tasks.discard)
+
+
+@app.on_event("shutdown")
+async def stop_classification() -> None:
+    tasks = list(classification_tasks)
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def classify_submission(complaint_id: int, revision: int) -> None:
+    # An old request must never restore a deleted or replaced submission.
+    async with classification_slots:
+        with connection() as conn:
+            row = conn.execute("""UPDATE complaints SET analysis_state='processing'
+                WHERE id=%s AND analysis_revision=%s AND analysis_state='pending'
+                AND deleted_at IS NULL AND complaint_status='접수' RETURNING title,content""", (complaint_id, revision)).fetchone()
+        if not row:
+            return
+        try:
+            record = await analyze(row['title'], row['content'])
+        except Exception:
+            record = fallback(row['title'], row['content'])
+        # Publish the department before the optional, potentially slow embedding.
+        metadata = json.dumps({key: record.get(key) for key in ['key_points', 'urgency', 'needs_review', 'review_reason', 'reason', 'keywords']}, ensure_ascii=False)
+        with connection() as conn:
+            result = conn.execute("""UPDATE complaints SET summary=%s,category=%s,analysis_state='completed',
+                processing_mode=%s,llm_model=%s,prompt_version=%s,analysis_metadata=%s::jsonb
+                WHERE id=%s AND analysis_revision=%s AND analysis_state='processing'
+                AND deleted_at IS NULL AND complaint_status='접수' RETURNING id""",
+                (record['summary'], record['category'], record.get('processing_mode', 'fallback'), record.get('model'), record.get('prompt_version'), metadata, complaint_id, revision)).fetchone()
+        if not result:
+            return
+    try:
+        vector = await embedding(record)
+    except Exception:
+        vector = None
+    if vector:
+        with connection() as conn:
+            conn.execute("""UPDATE complaints SET embedding=%s::vector,embedding_model='Qwen/Qwen3-Embedding-4B'
+                WHERE id=%s AND analysis_revision=%s AND analysis_state='completed'
+                AND deleted_at IS NULL AND complaint_status<>'취소'""", (vector_literal(vector), complaint_id, revision))
+
+
+@app.post('/api/complaints', status_code=201)
+def submit_own_complaint(body: ComplaintBody, background_tasks: BackgroundTasks, actor: Annotated[dict, Depends(actor_from_auth)]):
+    require_user(actor)
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(400, '민원 내용을 입력해 주세요.')
+    with connection() as conn:
+        content_hash = fingerprint(content)
+        conn.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))', (str(actor['owner_id']) + content_hash,))
+        existing = conn.execute("""SELECT id,title,content,category,complaint_status,analysis_state,analysis_revision FROM complaints
+            WHERE owner_user_id=%s AND content_fingerprint=%s AND deleted_at IS NULL AND complaint_status<>'취소' LIMIT 1""",
+            (actor['owner_id'], content_hash)).fetchone()
+        if existing:
+            return {'complaint': existing, 'duplicates': 1, 'message': '동일한 민원이 이미 접수되어 있습니다.'}
+        result = conn.execute("""INSERT INTO complaints(title,content,summary,category,owner_user_id,content_fingerprint,analysis_state,analysis_revision)
+            VALUES(%s,%s,'',NULL,%s,%s,'pending',1) RETURNING id,title,content,category,complaint_status,analysis_state,analysis_revision""",
+            (body.title.strip() or '제목 없음', content, actor['owner_id'], content_hash)).fetchone()
+    background_tasks.add_task(classify_submission, result['id'], result['analysis_revision'])
+    return {'complaint': result, 'message': '민원이 접수되었습니다.'}
 
 
 @app.get("/health")
@@ -522,7 +590,11 @@ async def batch(body: BatchBody, actor: Annotated[dict, Depends(actor_from_auth)
     if not body.complaints: raise HTTPException(400, "저장할 민원이 없습니다.")
     if actor["role"] == "user" and (len(body.complaints) != 1 or body.complaints[0].get("source_file")):
         raise HTTPException(403, "일반 사용자는 새 민원을 한 건씩 작성할 수 있습니다.")
-    saved, duplicates = await save_records(body.complaints[:MAX_BATCH_SIZE], actor)
+    saved = duplicates = 0
+    for start in range(0, len(body.complaints), MAX_BATCH_SIZE):
+        batch_saved, batch_duplicates = await save_records(body.complaints[start:start + MAX_BATCH_SIZE], actor)
+        saved += batch_saved
+        duplicates += batch_duplicates
     return {"saved": saved, "duplicates": duplicates}
 
 
@@ -532,24 +604,31 @@ def counts(actor: Annotated[dict, Depends(actor_from_auth)]):
         args, clause = (), "TRUE"
     else:
         args, clause = (actor["owner_id"],), "owner_user_id=%s AND NOT (complaint_status='취소' AND cancelled_by_role IS NOT DISTINCT FROM 'user')"
-    rows = fetch_all(f"SELECT COALESCE(category,'기타') category,COUNT(*)::int count FROM complaints WHERE deleted_at IS NULL AND {clause} GROUP BY category", args)
+    rows = fetch_all(f"SELECT category,COUNT(*)::int count FROM complaints WHERE deleted_at IS NULL AND category IS NOT NULL AND {clause} GROUP BY category", args)
     deleted = fetch_one(f"SELECT COUNT(*)::int count FROM complaints WHERE deleted_at IS NOT NULL AND {clause}", args)
     return {"categories": rows, "deleted": deleted["count"]}
 
 
 @app.get("/api/complaints")
-def complaints(deleted: bool = False, category: str | None = None, limit: int = 100, offset: int = 0, actor: dict = Depends(actor_from_auth)):
+def complaints(deleted: bool = False, category: str | None = None, limit: int = 100, offset: int = 0, source: str = "all", actor: dict = Depends(actor_from_auth)):
     limit = max(1, min(limit, 100)); offset = max(offset, 0)
     category = category or None
     if actor["role"] == "admin": clause, scope = "TRUE", []
     else: clause, scope = "owner_user_id=%s", [actor["owner_id"]]
     where = "deleted_at IS NOT NULL" if deleted else "deleted_at IS NULL"
+    if source not in ("all", "user", "file"):
+        raise HTTPException(400, "민원 출처는 all, user, file 중 하나여야 합니다.")
+    # File provenance is independent of ownership, including legacy imports.
+    if source == "user":
+        where += " AND NULLIF(BTRIM(source_file), '') IS NULL"
+    elif source == "file":
+        where += " AND NULLIF(BTRIM(source_file), '') IS NOT NULL"
     if actor["role"] == "user":
         where += " AND NOT (complaint_status='취소' AND cancelled_by_role IS NOT DISTINCT FROM 'user')"
     params: list[Any] = [*scope, category, category, limit, offset]
     response_filter = "" if actor["role"] == "admin" else " AND r.response_state='sent'"
-    sql = f"""SELECT id,title,content,summary,category,complaint_status,source_file,source_row,processing_mode,llm_model,embedding_model,created_at,deleted_at,cancelled_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
-        (owner_user_id IS NOT NULL) AS submitted_by_user,
+    sql = f"""SELECT id,title,content,summary,category,analysis_state,complaint_status,source_file,source_row,processing_mode,llm_model,embedding_model,created_at,deleted_at,cancelled_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
+        (NULLIF(BTRIM(source_file), '') IS NULL) AS submitted_by_user,
         COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response,
         COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response_state
         FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s)
@@ -577,10 +656,12 @@ def hide_cancelled_content(row: dict) -> dict:
 
 def locked_complaint(cur, complaint_id: int, actor: dict) -> dict:
     clause, args = scoped_where(actor)
-    cur.execute(f"SELECT * FROM complaints WHERE id=%s AND deleted_at IS NULL{clause} FOR UPDATE", (complaint_id, *args))
+    cur.execute(f"SELECT * FROM complaints WHERE id=%s{clause} FOR UPDATE", (complaint_id, *args))
     row = cur.fetchone()
     if not row:
         raise HTTPException(404, "민원을 찾을 수 없거나 해당 민원에 접근할 수 없습니다.")
+    if row['deleted_at']:
+        raise HTTPException(409, '해당 민원은 삭제(취소)되었습니다.')
     return row
 
 
@@ -594,8 +675,8 @@ def complaint_detail(complaint_id: int, actor: Annotated[dict, Depends(actor_fro
     # 목록과 같은 접근 범위; 관리자는 다른 부서 원문을 읽을 수 있다.
     clause, args = ("", []) if actor["role"] == "admin" else (" AND owner_user_id=%s", [actor["owner_id"]])
     response_filter = "" if actor["role"] == "admin" else " AND r.response_state='sent'"
-    row = fetch_one(f"""SELECT id,title,content,summary,category,complaint_status,created_at,deleted_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
-        (owner_user_id IS NOT NULL) submitted_by_user,
+    row = fetch_one(f"""SELECT id,title,content,summary,category,analysis_state,complaint_status,created_at,deleted_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
+        (NULLIF(BTRIM(source_file), '') IS NULL) submitted_by_user,
         COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1),'') latest_response,
         COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1),'') latest_response_state
         FROM complaints WHERE id=%s{clause}""", (complaint_id, *args))
@@ -621,7 +702,7 @@ def start_complaint(complaint_id: int, actor: Annotated[dict, Depends(actor_from
 
 
 @app.patch("/api/complaints/{complaint_id}")
-async def update_own_complaint(complaint_id: int, body: UpdateComplaintBody, actor: Annotated[dict, Depends(actor_from_auth)]):
+async def update_own_complaint(complaint_id: int, body: UpdateComplaintBody, background_tasks: BackgroundTasks, actor: Annotated[dict, Depends(actor_from_auth)]):
     require_user(actor)
     title, content = body.title.strip(), body.content.strip()
     if not content:
@@ -631,22 +712,22 @@ async def update_own_complaint(complaint_id: int, body: UpdateComplaintBody, act
         raise HTTPException(404, "본인 민원을 찾을 수 없습니다.")
     if original["complaint_status"] != "접수":
         raise HTTPException(409, "접수 대기 상태의 민원만 수정할 수 있습니다.")
-    record = await analyze(title, content)
-    vector = await embedding(record)
-    metadata = json.dumps({key: record.get(key) for key in ["key_points", "urgency", "needs_review", "review_reason", "reason", "keywords"]}, ensure_ascii=False)
     with connection() as conn:
         with conn.cursor() as cur:
             original = locked_complaint(cur, complaint_id, actor)
             if original["complaint_status"] != "접수":
                 raise HTTPException(409, "접수 대기 상태의 민원만 수정할 수 있습니다.")
-            cur.execute("""UPDATE complaints SET title=%s,content=%s,summary=%s,category=%s,content_fingerprint=%s,
-                processing_mode=%s,llm_model=%s,prompt_version=%s,analysis_metadata=%s::jsonb,embedding=%s::vector,embedding_model=%s,complaint_status='접수',status_updated_at=NOW()
-                WHERE id=%s AND owner_user_id=%s AND deleted_at IS NULL RETURNING id,title,summary,category,complaint_status""",
-                (record["title"], record["content"], record["summary"], record["category"], fingerprint(record["content"]), record.get("processing_mode", "fallback"), record.get("model"), record.get("prompt_version"), metadata, vector_literal(vector), "Qwen/Qwen3-Embedding-4B" if vector else None, complaint_id, actor["owner_id"]))
+            cur.execute("DELETE FROM complaint_responses WHERE complaint_id=%s AND response_state='draft'", (complaint_id,))
+            cur.execute("""UPDATE complaints SET title=%s,content=%s,summary='',category=NULL,content_fingerprint=%s,
+                processing_mode='pending',llm_model=NULL,prompt_version=NULL,analysis_metadata='{}'::jsonb,embedding=NULL,embedding_model=NULL,
+                analysis_state='pending',analysis_revision=analysis_revision+1,status_updated_at=NOW()
+                WHERE id=%s AND owner_user_id=%s AND deleted_at IS NULL RETURNING id,title,content,category,complaint_status,analysis_state,analysis_revision""",
+                (title or '제목 없음', content, fingerprint(content), complaint_id, actor['owner_id']))
             result = cur.fetchone()
         conn.commit()
     if not result:
         raise HTTPException(404, "수정할 본인 민원을 찾지 못했습니다.")
+    background_tasks.add_task(classify_submission, result['id'], result['analysis_revision'])
     return {"complaint": result}
 
 
@@ -660,21 +741,21 @@ def soft_delete(complaint_id: int, actor: Annotated[dict, Depends(actor_from_aut
             row = locked_complaint(cur, complaint_id, actor)
             require_open_complaint(row)
             cur.execute("UPDATE complaints SET complaint_status='취소',cancelled_at=NOW(),cancelled_by_role=%s,cancellation_reason=%s,status_updated_at=NOW() WHERE id=%s", (actor["role"], reason or "민원인이 해당 민원을 취소했습니다.", complaint_id))
+            if actor['role'] == 'user':
+                cur.execute("UPDATE complaints SET deleted_at=NOW(),analysis_state='cancelled',analysis_revision=analysis_revision+1 WHERE id=%s", (complaint_id,))
             cur.execute("DELETE FROM complaint_responses WHERE complaint_id=%s AND response_state='draft'", (complaint_id,))
         conn.commit()
     return {"deleted": 1, "complaint_status": "취소", "message": "민원이 취소되었습니다." if actor["role"] == "user" else "민원이 삭제되었습니다."}
 
 
 @app.post("/api/complaints/{complaint_id}/follow-up", status_code=201)
-async def follow_up(complaint_id: int, body: ComplaintBody, actor: Annotated[dict, Depends(actor_from_auth)]):
+async def follow_up(complaint_id: int, body: ComplaintBody, background_tasks: BackgroundTasks, actor: Annotated[dict, Depends(actor_from_auth)]):
     require_user(actor)
     if not body.content.strip():
         raise HTTPException(400, "새 민원 내용을 입력해 주세요.")
     parent = fetch_one("SELECT id FROM complaints WHERE id=%s AND owner_user_id=%s AND complaint_status='완료' AND deleted_at IS NULL", (complaint_id, actor["owner_id"]))
     if not parent:
         raise HTTPException(409, "답변이 완료된 본인 민원에만 재민원을 접수할 수 있습니다.")
-    record = await analyze(body.title, body.content)
-    vector = await embedding(record)
     with connection() as conn:
         with conn.cursor() as cur:
             parent = locked_complaint(cur, complaint_id, actor)
@@ -685,9 +766,11 @@ async def follow_up(complaint_id: int, body: ComplaintBody, actor: Annotated[dic
             if not answer:
                 raise HTTPException(409, "전송 완료된 답변이 없습니다.")
             context = {"complaint_id": complaint_id, "title": parent["title"], "content": parent["content"], "response": answer["content"], "previous_context": parent.get("previous_context")}
-            cur.execute("""INSERT INTO complaints(title,content,summary,category,owner_user_id,complaint_status,parent_complaint_id,previous_context,content_fingerprint,processing_mode,llm_model,embedding,embedding_model)
-                VALUES(%s,%s,%s,%s,%s,'접수',%s,%s::jsonb,%s,%s,%s,%s::vector,%s) RETURNING id""", (record["title"], record["content"], record["summary"], parent["category"], actor["owner_id"], complaint_id, json.dumps(context, ensure_ascii=False), fingerprint(record["content"]), record.get("processing_mode", "fallback"), record.get("model"), vector_literal(vector), "Qwen/Qwen3-Embedding-4B" if vector else None))
+            cur.execute("""INSERT INTO complaints(title,content,summary,category,owner_user_id,complaint_status,parent_complaint_id,previous_context,content_fingerprint,processing_mode,analysis_state,analysis_revision)
+                VALUES(%s,%s,'',NULL,%s,'접수',%s,%s::jsonb,%s,'pending','pending',1) RETURNING id,analysis_revision""",
+                (body.title.strip() or '제목 없음', body.content.strip(), actor['owner_id'], complaint_id, json.dumps(context, ensure_ascii=False), fingerprint(body.content)))
             result = cur.fetchone()
+    background_tasks.add_task(classify_submission, result['id'], result['analysis_revision'])
     return {"complaint": result, "message": "이전 민원과 답변을 포함한 재민원이 접수되었습니다."}
 
 
@@ -728,22 +811,24 @@ def permanent(complaint_id: int, body: PasswordBody, actor: Annotated[dict, Depe
 
 @app.delete("/api/complaints/deleted/all")
 def permanent_all(body: PasswordBody, actor: Annotated[dict, Depends(actor_from_auth)]):
-    check_password(actor, body.password); clause, args = scoped_where(actor, 1)
+    # Temporary cross-department test cleanup; do not grant access to users.
+    require_admin(actor)
+    check_password(actor, body.password)
     with connection() as conn:
-        with conn.cursor() as cur: cur.execute(f"DELETE FROM complaints WHERE deleted_at IS NOT NULL AND complaint_status NOT IN ('완료','취소'){clause} RETURNING id", args); count = len(cur.fetchall())
+        with conn.cursor() as cur: cur.execute("DELETE FROM complaints WHERE deleted_at IS NOT NULL RETURNING id"); count = len(cur.fetchall())
         conn.commit()
     return {"permanently_deleted": count}
 
 
 @app.delete("/api/complaints/department/all")
 def permanent_department_all(actor: Annotated[dict, Depends(actor_from_auth)]):
-    """Testing-only cancellation of open complaints; terminal states remain immutable."""
+    """Testing-only archive of all active complaints, including terminal states."""
     # This route is deliberately restricted to department administrators.  It is
     # a temporary test-reset tool and must be removed before production release.
     require_department(actor)
     with connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("UPDATE complaints SET complaint_status='취소',cancelled_at=NOW(),cancelled_by_role='admin',cancellation_reason='테스트 데이터 전체 정리',status_updated_at=NOW() WHERE deleted_at IS NULL AND complaint_status IN ('접수','진행중') RETURNING id")
+            cur.execute("UPDATE complaints SET complaint_status='취소',cancelled_at=NOW(),cancelled_by_role='admin',cancellation_reason='테스트 데이터 전체 정리',status_updated_at=NOW(),deleted_at=NOW() WHERE deleted_at IS NULL RETURNING id")
             ids = [row["id"] for row in cur.fetchall()]
             count = len(ids)
             cur.execute("DELETE FROM complaint_responses WHERE complaint_id=ANY(%s) AND response_state='draft'", (ids,))
@@ -774,11 +859,17 @@ async def save_upload(upload: UploadFile, maximum: int) -> tuple[Path, str]:
 
 
 def csv_encoding(path: Path) -> str:
-    # 한국어 UTF-8 CSV가 통계 기반 감지에서 CP949로 잘못 판정되면 제목·카테고리가 깨진다.
-    # 우선 엄격 UTF-8을 확인하고, 실패할 때만 국내 공공데이터의 CP949로 폴백한다.
-    sample = path.read_bytes()[:65536]
+    # Read a bounded sample; do not load a potentially 1GB CSV into memory.
+    with path.open("rb") as source:
+        sample = source.read(65536)
+    for marker, encoding in ((codecs.BOM_UTF8, "utf-8-sig"),
+                             (codecs.BOM_UTF32_LE, "utf-32"), (codecs.BOM_UTF32_BE, "utf-32"),
+                             (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16")):
+        if sample.startswith(marker):
+            return encoding
     try:
-        sample.decode("utf-8")
+        # An incomplete character at the sample boundary is not invalid UTF-8.
+        codecs.getincrementaldecoder("utf-8")().decode(sample, final=False)
         return "utf-8-sig"
     except UnicodeDecodeError:
         return "cp949"
@@ -927,14 +1018,30 @@ def process_csv_job(job: dict[str, Any]) -> None:
             conn.commit()
 
 
+def start_import_worker(job_id: str) -> None:
+    try:
+        ensure_csv_worker()
+    except Exception as error:
+        message = "CSV 처리 워커를 실행하지 못했습니다. 재처리를 눌러 다시 시도하거나 서버 실행 환경을 확인해 주세요."
+        with connection() as db:
+            with db.cursor() as cur:
+                cur.execute("UPDATE import_jobs SET status='failed',last_error=%s WHERE id=%s AND status='queued'", (message, job_id))
+            db.commit()
+        raise HTTPException(503, message) from error
+
+
 @app.post("/api/imports", status_code=202)
 async def create_import(file: UploadFile = File(...), actor: dict = Depends(actor_from_auth)):
     require_admin(actor)
     path, suffix = await save_upload(file, CSV_MAX_UPLOAD_BYTES)
     if suffix != ".csv": path.unlink(missing_ok=True); raise HTTPException(400, "일괄 처리는 CSV 파일만 지원합니다.")
-    encoding = csv_encoding(path)
-    total = sum(1 for _ in csv_rows(path, encoding))
-    headers, samples = csv_preview(path, encoding)
+    try:
+        encoding = csv_encoding(path)
+        total = sum(1 for _ in csv_rows(path, encoding))
+        headers, samples = csv_preview(path, encoding)
+    except (UnicodeError, csv.Error) as error:
+        path.unlink(missing_ok=True)
+        raise HTTPException(422, "CSV 문자 인코딩 또는 형식을 읽을 수 없습니다. 파일을 CSV UTF-8 형식으로 다시 저장해 업로드해 주세요.") from error
     if not headers:
         path.unlink(missing_ok=True); raise HTTPException(422, "CSV 헤더를 찾지 못했습니다.")
     signature = csv_schema_signature(headers)
@@ -956,6 +1063,8 @@ async def create_import(file: UploadFile = File(...), actor: dict = Depends(acto
             if not needs_mapping and not stored_mapping:
                 cur.execute("INSERT INTO csv_schema_mappings(schema_signature,column_mapping,confidence,created_by_user_id) VALUES(%s,%s::jsonb,%s,%s) ON CONFLICT(schema_signature) DO NOTHING", (signature, json.dumps(mapping, ensure_ascii=False), mapping["confidence"], actor["sub"]))
         conn.commit()
+    if not needs_mapping:
+        await asyncio.to_thread(start_import_worker, str(job_id))
     return {"job_id": job_id, "status": status, "total_rows": total, "batch_size": MAX_BATCH_SIZE, "needs_mapping": needs_mapping, "headers": headers, "samples": samples, "mapping": mapping}
 
 
@@ -980,6 +1089,7 @@ def confirm_import_mapping(job_id: str, body: CsvMappingBody, actor: Annotated[d
                     VALUES(%s,%s,%s::jsonb,%s,%s)
                     ON CONFLICT(schema_signature) DO UPDATE SET profile_name=EXCLUDED.profile_name,column_mapping=EXCLUDED.column_mapping,confidence=EXCLUDED.confidence,created_by_user_id=EXCLUDED.created_by_user_id,updated_at=NOW()""", (job["schema_signature"], body.profile_name.strip() or None, json.dumps(mapping, ensure_ascii=False), mapping["confidence"], actor["sub"]))
         conn.commit()
+    start_import_worker(job_id)
     return {"job_id": job_id, "status": "queued", "mapping": mapping}
 
 
@@ -1013,6 +1123,7 @@ def retry_import(job_id: str, actor: Annotated[dict, Depends(actor_from_auth)]):
         conn.commit()
     if not row:
         raise HTTPException(404, "재처리할 실패 작업을 찾지 못했습니다.")
+    start_import_worker(job_id)
     return row
 
 
@@ -1029,8 +1140,7 @@ async def intake(file: UploadFile = File(...), actor: dict = Depends(actor_from_
     try:
         records: list[dict[str, Any]] = []
         if suffix == ".csv":
-            rows = list(csv_rows(path, csv_encoding(path)))[:MAX_BATCH_SIZE]
-            records = [record for index, row in enumerate(rows, start=2) if (record := row_to_complaint(row, index))]
+            records = [record for index, row in enumerate(csv_rows(path, csv_encoding(path)), start=2) if (record := row_to_complaint(row, index))]
         elif suffix in {".xlsx", ".xls"}:
             records = spreadsheet_records(path, suffix)
         elif suffix == ".pdf":
@@ -1047,7 +1157,11 @@ async def intake(file: UploadFile = File(...), actor: dict = Depends(actor_from_
         else: raise HTTPException(400, "HWP, PDF, 이미지, XLSX, XLS, CSV 파일만 지원합니다.")
         if not records:
             raise HTTPException(422, "민원 제목과 본문을 가진 데이터를 찾지 못했습니다.")
+        for record in records:
+            record["source_file"] = file.filename or "업로드 문서"
         return {"file_name": file.filename, "processed": len(records), "max_batch_size": MAX_BATCH_SIZE, "complaints": records}
+    except (UnicodeError, csv.Error) as error:
+        raise HTTPException(422, "파일 문자 인코딩 또는 형식을 읽을 수 없습니다. CSV는 UTF-8 형식으로 다시 저장해 주세요.") from error
     finally: path.unlink(missing_ok=True)
 
 
@@ -1057,9 +1171,9 @@ def department_context(actor: Annotated[dict, Depends(actor_from_auth)]):
 
 
 def department_complaint(complaint_id: int, actor: dict) -> dict:
-    row = fetch_one("SELECT id,title,category,complaint_status FROM complaints WHERE id=%s AND deleted_at IS NULL AND category=ANY(%s)", (complaint_id, require_department(actor)))
+    row = fetch_one("SELECT id,title,category,complaint_status,deleted_at FROM complaints WHERE id=%s AND category=ANY(%s)", (complaint_id, require_department(actor)))
     if not row: raise HTTPException(404, "소속 부서에서 처리할 수 있는 민원을 찾지 못했습니다.")
-    if row["complaint_status"] == "취소":
+    if row["complaint_status"] == "취소" or row['deleted_at']:
         raise HTTPException(409, "해당 민원은 삭제(취소)되었습니다.")
     return row
 
@@ -1067,7 +1181,7 @@ def department_complaint(complaint_id: int, actor: dict) -> dict:
 @app.get("/api/department/complaints")
 def department_complaints(status: str = "", actor: dict = Depends(actor_from_auth)):
     categories = require_department(actor)
-    rows = fetch_all("""SELECT id,title,content,summary,category,complaint_status,status_updated_at,created_at,(owner_user_id IS NOT NULL) submitted_by_user,
+    rows = fetch_all("""SELECT id,title,content,summary,category,complaint_status,status_updated_at,created_at,(NULLIF(BTRIM(source_file), '') IS NULL) submitted_by_user,
         COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response,
         COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response_state
         FROM complaints WHERE deleted_at IS NULL AND category=ANY(%s) AND (%s='' OR complaint_status=%s) ORDER BY created_at DESC LIMIT 200""", (categories, status, status))
