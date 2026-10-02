@@ -187,8 +187,18 @@ CREATE UNIQUE INDEX department_documents_version_idx ON department_documents(doc
 CREATE INDEX department_documents_scope_idx ON department_documents(department, deleted_at, created_at DESC);
 CREATE INDEX department_documents_embedding_hnsw_idx ON department_documents USING hnsw (embedding vector_cosine_ops);
 
+INSERT INTO app_users (id, owner_id, email, username, display_name, password_salt, password_hash, account_role, department) VALUES
+  ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-9000-000000000001', 'user-a@complaintai.local', 'user-a', '테스트 일반 사용자 A', '58bf4559c2c4498063d07dd64de7c61d', '8f0d4903c225b01684ab6d46548c193b6f549dd9dbbd14193e6c1e2a7a2b681c15316783cb9962c3befdca1a0dcf987ade02784318547b9350ef62bac4d161ee', 'user', NULL),
+  ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-9000-000000000002', 'user-b@complaintai.local', 'user-b', '테스트 일반 사용자 B', '120b0ba4daf51a304f2c743204ba0d17', '3cbe0ecd7334a8b751c9eab368158eba290c6ac8c6199b7148eb7bcf6406701d14c10a7d50874f079ab8245c47805cf2fe93f847df43c7c43967e2cbff037f1a', 'user', NULL),
+  ('00000000-0000-4000-8000-000000000101', '00000000-0000-4000-9000-000000000101', 'admin-administration-safety@complaintai.local', 'admin-administration-safety', '행정·안전 관리자', '3a38b03359f26a8e9e3bba75cec5dcc6', '04624396c44e9e14a767325dd09d21686e4e94398ed1e0d8ee4289a37c23811e51401023f25f4fb0afc30bf60f6edec4d9f870659227daa5e7ce6db11bfaa721', 'admin', '행정·안전'),
+  ('00000000-0000-4000-8000-000000000102', '00000000-0000-4000-9000-000000000102', 'admin-land-transport@complaintai.local', 'admin-land-transport', '국토·교통 관리자', '29f49778b76d123bd7001754fdf9995f', '212d95ba99eff11252f1e18817568689e59e1f71e4cdc8e0d258a3a3a88e6badc041dab5e2dda6711df3742f7b0f38999f051905b2c5219aff6d670411b00471', 'admin', '국토·교통'),
+  ('00000000-0000-4000-8000-000000000103', '00000000-0000-4000-9000-000000000103', 'admin-housing@complaintai.local', 'admin-housing', '주택건축 관리자', 'b4c8b8c257a7bf844a13aaed1d8b6462', '0b977081db25891d3a11ceae60adc0d6f9bb9f2b58cd21c968fa7048667dc54ad9c1951988e9a96639636441484656795070e619946ea7b840636d08c382acd6', 'admin', '주택건축'),
+  ('00000000-0000-4000-8000-000000000104', '00000000-0000-4000-9000-000000000104', 'admin-environment@complaintai.local', 'admin-environment', '환경·위생 관리자', '9e030b1888427dc21e93955b3f2888a1', 'ae3b6ccd31aed6a159997b247b8601287d9fb0feca1744f119bb539ee5304707d05461a2b16cffb6594ea4c2988fd25f49374f0d8c0e1610e7310546f24eff2a', 'admin', '환경·위생'),
+  ('00000000-0000-4000-8000-000000000105', '00000000-0000-4000-9000-000000000105', 'admin-welfare@complaintai.local', 'admin-welfare', '보건복지 관리자', '340a77c8eaa83510b012897f8ea37f5d', '4a4f31ecf6bf15a6cbc6cd149746127ae83ca09f35454a48e8169147f2a3ec8c3c8886388b4670ed8035b8fde25d8dd7e30f72ab6a1a6cfa10eb7ddd145da983', 'admin', '보건복지'),
+  ('00000000-0000-4000-8000-000000000106', '00000000-0000-4000-9000-000000000106', 'admin-fire@complaintai.local', 'admin-fire', '소방 관리자', 'bdcf982b99c2c8ccd14bd305629d85f4', '809f23171ae066decb9c885c2bf64042ed07f984ff0d3b07c5c124493edbfc539d50f71d960b8c1889408745c0ac0745a4f7285f17f61ae04775f9fc3f32a155', 'admin', '소방'),
+  ('00000000-0000-4000-8000-000000000107', '00000000-0000-4000-9000-000000000107', 'admin-other@complaintai.local', 'admin-other', '기타 관리자', 'cf40bab759cc5f6a387d4178a8e364c5', 'cac10762bc2ad4146b6f89b6d3d0cf2d86cbe69d119bd5c37e8c3c5ad5b2daba6811243d74c00b5bf47f3bd4b87c99e8a54ad4916fc43457586fa1e534727e2a', 'admin', '기타')
+ON CONFLICT (username) DO NOTHING;
+
 COMMIT;
 
--- 계정까지 동기화할 경우 data-only 백업을 복원한다.
--- 처음 실행하는 개발자는 필요에 따라 seed_demo_accounts.sql을 별도로 실행한다.
 

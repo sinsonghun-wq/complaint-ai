@@ -19,12 +19,14 @@ from fastapi.security import APIKeyHeader
 import pandas as pd
 import psycopg
 from openpyxl import load_workbook
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
+
+from app.agent import ChatResponseBody, lifespan
 
 from .ai import CATEGORIES, analyze, embedding, fallback, fingerprint, infer_csv_mapping
 from .db import connection, fetch_all, fetch_one

@@ -6,6 +6,7 @@ import math
 import re
 import time
 from typing import Any
+from .logger import logger
 
 import httpx
 
@@ -55,12 +56,14 @@ async def analyze(title: str, content: str) -> dict[str, Any]:
     try:
         async with httpx.AsyncClient(timeout=LLM_TIMEOUT_MS / 1000) as client:
             response = await client.post(f"{OLLAMA_URL}/api/chat", json={"model": LLM_MODEL, "stream": False, "format": "json", "options": {"temperature": 0, "top_p": 0.1, "num_ctx": 2048, "num_predict": 260}, "messages": [{"role": "user", "content": prompt(title, content)}]})
+            logger.info(response.json())
             response.raise_for_status()
             raw = json.loads(response.json()["message"]["content"].replace("```json", "").replace("```", "").strip())
         if raw.get("category") not in CATEGORIES or not clean(raw.get("summary")):
             raise ValueError("LLM JSON validation failed")
         return {**safe, **raw, "title": clean(raw.get("title")) or safe["title"], "content": redact(content), "summary": clean(raw["summary"])[:900], "category": raw["category"], "urgency": raw.get("urgency") if raw.get("urgency") in {"low", "medium", "high"} else "medium", "processing_mode": "llm", "model": LLM_MODEL}
     except Exception as error:
+        logger.exception(error)
         return fallback(title, content, f"LLM을 사용할 수 없어 규칙 기반 처리로 저장했습니다. ({error})")
 
 

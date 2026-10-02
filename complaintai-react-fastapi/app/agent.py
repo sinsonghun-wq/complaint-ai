@@ -1,7 +1,5 @@
 import ast
 import asyncio
-import logging
-import re
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel
 from langchain_core.tools import tool
@@ -10,20 +8,13 @@ from langchain_ollama import ChatOllama
 from langchain.agents import create_agent
 from contextlib import asynccontextmanager
 
+from .logger import logger
 from .ai import LLM_MODEL, embeddingForSelect
 from .db import fetch_all
 from langgraph.checkpoint.memory import MemorySaver # 1. 메모리 세이버 임포트
 
 
-# 로거 설정
-logger = logging.getLogger("test")
-logger.setLevel(logging.DEBUG)
-if not logger.handlers:
-    stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    stream_handler.setFormatter(formatter)
-    logger.addHandler(stream_handler)
+
 
 class ChatRequestBody(BaseModel):
     content: str
