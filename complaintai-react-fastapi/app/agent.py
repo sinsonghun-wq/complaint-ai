@@ -1,5 +1,6 @@
 import ast
 import asyncio
+import json
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel
 from langchain_core.tools import tool
@@ -14,7 +15,7 @@ from .db import fetch_all
 from langgraph.checkpoint.memory import MemorySaver # 1. 메모리 세이버 임포트
 
 
-
+ROW_LIMIT =5
 
 class ChatRequestBody(BaseModel):
     content: str
@@ -26,12 +27,14 @@ class ChatResponseBody(BaseModel):
 
 # --- 툴 정의 ---
 @tool
-async def aiFAQ() -> ChatResponseBody:
-    """민원 처리와 관련 없는 질문에 대해서는 LLM 모델이 직접 답변합니다."""
-    return ChatResponseBody(code=0)
+async def aiFAQ() -> dict:
+    """민원 처리와 관련 없는 질문에 대해서는 LLM 모델이 직접 답변합니다.
+    반환값은 반드시 {"code":0, "result"=[]}와 같은 형식이어야합니다.
+    """
+    return {"code": 0, "result": []}
 
 @tool
-def insertRequest(title:str,content:str):
+def insertRequest(title:str,content:str)-> dict:
     """
     사용자가 민원 접수를 원하거나 접수 의사를 표현할 경우 접수를 진행할 수 있는 form을 좌측에 띄워줍니다.
     form은 민원의 제목을 나타내는 title과 민원의 내용을 나타내는 content로 이루어져 있습니다.
@@ -43,36 +46,39 @@ def insertRequest(title:str,content:str):
     
     사용자에게 생성된 form을 확인하고, 마음에 들면 '접수' 버튼을 눌러 접수를 진행해달라고 안내합니다.
     마음에 들지 않을 경우 form을 직접 수정한 후 접수를 진행할 수 있음을 안내합니다.
+    반환값은 반드시 {"code":1, "result"=[{"title":title, "content":content}]}와 같은 형식이어야합니다.
     """
 
 
-    return ChatResponseBody(code=1,result=[(title,content)])
-
+    return {"code": 1, "result": [{"title":title, "content":content}]}
 @tool
-def responseComplaintT(message: str):
+def responseComplaintT(message: str)-> dict:
     """
     이 툴은 반드시 서버의 메시지일 경우에만 호출합니다.
     서버의 메시지는 반드시 [서버]라는 문자열로 시작합니다.
     message는 민원인이 민원처리를 한 결과를 나타냅니다. 이 message 내용을 읽고 민원인에게 처리 결과를 알려줍니다.
+    반환값은 반드시 {"code":3, "message": message, "result"=[]}와 같은 형식이어야합니다.
     """
-    return ChatResponseBody(code=3, message=message)
+    return {"code": 3, "message": message, "result": []}
 
 @tool
-async def selectComplaintT(content: str, is_described: bool, config: RunnableConfig):
+async def selectComplaintT(content: str, is_described: bool, config: RunnableConfig)-> dict:
     """
         민원인이 민원의 조회, 수정, 삭제를 요청한 경우에 관련 민원을 조회합니다.
         민원인이 어떤 민원을 처리하고 싶은지 묘사했다면, 그 값은 content가 됩니다.
         is_described는 민원인이 처리하고자 하는 민원에 대한 자세한 묘사나 설명이 존재하는지를 나타내는 bool 값입니다.
         content의 내용이 민원의 내용을 구체적으로 묘사한 형태일 경우 True이고, 아닐경우 false입니다.
         예를 들어 단순히 민원인이 '민원 삭제할래'라고 말했다면 이건 어떤 민원을 삭제할지 모르므로 is_described는 false가 되어야 합니다.
-        is_described이 True일 경우에는 민원 내용을 유사도 검색을 통해 DB에서 관련 민원들을 최대 3개까지 가져옵니다.
-        가져온 민원 목록은 민원인이 보고있는 화면 좌측에 보여지는데, 그 목록은 수정 및 삭제가 가능한 목록입니다.
-        따라서, 민원인에게 좌측의 민원 목록을 통해 수정 및 삭제가 가능함만 안내합니다.
+        is_described이 True일 경우에는 민원 내용을 유사도 검색을 통해 DB에서 조회된 민원들을 전부 가져옵니다.
+        가져온 민원 목록은 민원인이 보고있는 화면 좌측에 보여집니다.
+        그 목록의 민원중에 접수 대기중이거나 진행중인 민원의 경우 수정 및 삭제가 가능하지만, 이미 처리가 완료되거나 취소된 민원은 조회만 가능합니다.
+        민원인에게 좌측의 위 내용을 전달하여 민원 처리를 돕도록 합니다.
         is_described이 False일 경우에는 아래 내용을 따릅니다.
         만약 민원인이 어떤 민원을 처리하고 싶은지 묘사하지 않았다면 처리하고 싶은 민원의 내용만 묻습니다.
         내용의 유사도에 대한 검색만 지원하고 ID를 이용한 검색은 지원하지 않기 때문에 절대로 ID및 번호는 묻지 않습니다.
         is_described이 False일 경우라도 올바른 code값을 제공해야하므로 여전히 툴을 사용합니다.
-        
+        반환값은 반드시 {"code":2,"result"=rows}와 같은 형식이어야합니다.
+        위에서 언급한 rows는 id, title, content, category, created_at, complaint_status값이 담긴 튜플 형식입니다.
     """
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id")
@@ -81,10 +87,22 @@ async def selectComplaintT(content: str, is_described: bool, config: RunnableCon
     if is_described and user_id:
         vector = await embeddingForSelect(content)
         rows = fetch_all(
-            "SELECT id, title, content, category, created_at, complaint_status FROM complaints WHERE owner_user_id=%s ORDER BY 1-(embedding <=> %s::vector) LIMIT 3;",
+            f"""
+                SELECT 
+                    id, 
+                    title, 
+                    content, 
+                    category, 
+                    TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at, 
+                    complaint_status 
+                FROM complaints 
+                WHERE owner_user_id = %s 
+                ORDER BY embedding <=> %s::vector 
+                LIMIT {ROW_LIMIT};
+            """,
             (user_id, str(vector))
         )
-    return ChatResponseBody(code=2, result=rows)
+    return {"code": 2, "result": rows}
 
 
 # --- 큐 및 워커 시스템 ---
@@ -92,20 +110,18 @@ request_queue = asyncio.Queue()
 worker_task = None
 
 async def llm_worker(agent_executor):
-    """큐에서 민원인의 요청을 하나씩 꺼내 순서대로 처리하는 백그라운드 워커"""
     while True:
         try:
             user_id, query, future = await request_queue.get()
             logger.info(f"--- [처리 시작] 유저 ID: {user_id} | 질문: {query} ---")
             
-            config = {"configurable": {"user_id": user_id,"thread_id": user_id}}
+            config = {"configurable": {"user_id": user_id, "thread_id": user_id}}
             
-            # 기본값 설정
             final_code = 0
             final_message = ""
             final_result_list = []
-            
-            # astream_events를 통해 에이전트 실행 과정 모니터링
+            tool_message = None
+
             async for event in agent_executor.astream_events(
                 {"messages": [("human", query)]}, 
                 config=config,
@@ -113,32 +129,35 @@ async def llm_worker(agent_executor):
             ):
                 kind = event["event"]
                 
-                # 1. AI 모델의 최종 텍스트 응답 캡처 -> message로 사용
+                # 1. AI 모델의 최종 대화 텍스트 응답 캡처
                 if kind == "on_chat_model_end":
                     output_message = event["data"].get("output")
                     if hasattr(output_message, "content") and output_message.content:
-                        # 툴 호출만을 위한 빈 메시지가 아니라 실제 대화 텍스트인 경우
+                        # 툴 호출만을 위한 메시지가 아니라 실제 사용자 답변일 경우에만 덮어씀
                         if not getattr(output_message, "tool_calls", None):
                             final_message = output_message.content
                 
-                # 2. 툴 실행 결과 캡처 -> code 및 result 추출 (다양한 데이터 구조 대응)
+                # 2. 툴 실행 결과 캡처 (한 번 값이 잡히면 계속 유지)
                 elif kind == "on_tool_end":
                     tool_output = event["data"].get("output")
                     tool_name = event.get("name")
                     logger.info(f"[{user_id}] Tool 호출됨 [{tool_name}] - 원본 반환값: {tool_output}")
                     
-                    # tool_output 형태에 따른 안전한 데이터 추출
-                    code, res = parse_tool_output(tool_output)
-                    if code is not None:
-                        final_code = code
-                    if res is not None:
-                        final_result_list = res
+                    data = parse_tool_output_safe(tool_output)
+                    if data:
+                        if "code" in data:
+                            final_code = data["code"]
+                        if "result" in data and data["result"]:
+                            final_result_list = data["result"]
+                        if "message" in data and data["message"]:
+                            tool_message = data["message"]
 
-            # 만약 대화 중 on_chat_model_end로 message가 잡히지 않았다면 툴의 결과나 기본 메시지 보완
-            if not final_message:
+            # 3. 우선순위에 따른 최종 message 설정
+            if tool_message and not final_message:
+                final_message = tool_message
+            elif not final_message:
                 final_message = "요청이 정상적으로 처리되었습니다."
 
-            # 최종 ChatResponseBody 조립
             final_response = ChatResponseBody(
                 code=final_code,
                 message=final_message,
@@ -157,16 +176,31 @@ async def llm_worker(agent_executor):
         finally:
             request_queue.task_done()
 
+def parse_tool_output_safe(tool_output):
+    """ToolMessage 반환값을 안전하게 dict로 변환"""
+    # 1. 이미 dict 형태인 경우
+    if isinstance(tool_output, dict):
+        return tool_output
+    
+    # 2. ToolMessage 객체인 경우 content 추출
+    content = getattr(tool_output, "content", tool_output)
+    if isinstance(content, dict):
+        return content
+    
+    # 3. 문자열 형태인 경우 (JSON or Python Dict 텍스트)
+    if isinstance(content, str):
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            try:
+                # Python dict 문자열("{'code': 2, ...}") 형태 파싱 fallback
+                res = ast.literal_eval(content)
+                if isinstance(res, dict):
+                    return res
+            except Exception:
+                pass
 
-def parse_tool_output(tool_output):
-    """code와 result를 추출하는 함수"""
-    content_str = tool_output.content  
-
-    #"code=1 message=None result=[('', '')]"
-    code = ast.literal_eval(content_str.split('code=')[1].split(' ')[0])
-    result = ast.literal_eval(content_str.split('result=')[1])
-                
-    return code, result
+    return None
 
 
 async def enqueue_chat_request(user_id: str, query: str) -> ChatResponseBody:
@@ -184,7 +218,7 @@ async def lifespan(app: FastAPI):
     global worker_task
     tools = [aiFAQ, insertRequest, selectComplaintT, responseComplaintT]
     #기존에 쓰던 qwen2.5:7b-instruct의 경우 추론이 실패한 경우가 많아 다양한 모델로 테스트중
-    llm = ChatOllama(model="gemma4:e4b", temperature=0.1)
+    llm = ChatOllama(model=LLM_MODEL, temperature=0.1)
 
     memory = MemorySaver()
 

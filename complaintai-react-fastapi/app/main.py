@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
-from app.agent import ChatResponseBody, lifespan
+from app.agent import ChatResponseBody, enqueue_chat_request, lifespan
 
 from .ai import CATEGORIES, analyze, embedding, fallback, fingerprint, infer_csv_mapping
 from .db import connection, fetch_all, fetch_one
