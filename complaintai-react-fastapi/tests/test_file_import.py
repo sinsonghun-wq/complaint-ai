@@ -20,7 +20,7 @@ class FileImportTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="file-import-test-", dir=Path(__file__).resolve().parents[1] / "data")
         self.path = Path(self.temp.name)
         self.previous = dict(app.dependency_overrides)
-        app.dependency_overrides[actor_from_auth] = lambda: {"role": "admin", "department": "건설·국토"}
+        app.dependency_overrides[actor_from_auth] = lambda: {"role": "admin", "department": "교통·국토"}
         self.client = TestClient(app)
 
     def tearDown(self):
@@ -88,7 +88,7 @@ class FileImportTests(unittest.TestCase):
                 cur.execute("CREATE TEMP TABLE complaints(id INT PRIMARY KEY, category TEXT, complaint_status TEXT, cancelled_at TIMESTAMPTZ, cancelled_by_role TEXT, cancellation_reason TEXT, status_updated_at TIMESTAMPTZ, deleted_at TIMESTAMPTZ)")
                 cur.execute("CREATE TEMP TABLE complaint_responses(complaint_id INT, response_state TEXT)")
                 for identifier, status in enumerate(["접수", "진행중", "완료", "취소"], 1):
-                    cur.execute("INSERT INTO complaints(id,category,complaint_status) VALUES(%s,%s,%s)", (identifier, "건설·국토" if identifier == 1 else "환경·위생", status))
+                    cur.execute("INSERT INTO complaints(id,category,complaint_status) VALUES(%s,%s,%s)", (identifier, "교통·국토" if identifier == 1 else "환경·위생", status))
                     cur.execute("INSERT INTO complaint_responses VALUES(%s,%s)", (identifier, "sent" if status == "완료" else "draft"))
             db.commit()
             with patch("app.main.connection", side_effect=lambda: nullcontext(db)):
@@ -107,7 +107,7 @@ class FileImportTests(unittest.TestCase):
         with connection() as db:
             with db.cursor() as cur:
                 cur.execute("CREATE TEMP TABLE complaints(id INT PRIMARY KEY, category TEXT, complaint_status TEXT, deleted_at TIMESTAMPTZ)")
-                cur.execute("INSERT INTO complaints VALUES(1,'건설·국토','취소',NOW()),(2,'건설·국토','완료',NOW()),(3,'환경·위생','취소',NOW()),(4,'건설·국토','접수',NULL)")
+                cur.execute("INSERT INTO complaints VALUES(1,'교통·국토','취소',NOW()),(2,'교통·국토','완료',NOW()),(3,'환경·위생','취소',NOW()),(4,'교통·국토','접수',NULL)")
             db.commit()
             with patch("app.main.connection", side_effect=lambda: nullcontext(db)), patch("app.main.check_password") as check:
                 result = self.client.request("DELETE", "/api/complaints/deleted/all", json={"password": "test-password"})

@@ -5,12 +5,17 @@
 ## 처음 실행하기
 
 1. Docker Desktop을 실행한 뒤 프로젝트 루트에서 `docker compose up -d`를 실행한다.
-2. 빈 PostgreSQL 볼륨이라면 `database/init.sql`이 스키마를 만들고, `database/seed_demo_accounts.sql`이 개발용 일반 사용자 2개와 9개 부서 관리자 9개를 생성한다.
+2. 빈 PostgreSQL 볼륨이라면 `database/init.sql`이 스키마를 만들고, `database/seed_demo_accounts.sql`이 개발용 일반 사용자 2개와 7개 부서 관리자 7개를 생성한다.
 3. `complaintai-react-fastapi/.env.example`을 `complaintai-react-fastapi/.env`로 복사한다.
 4. `complaintai-react-fastapi`에서 Python 의존성을 설치하고, `frontend`에서 `npm install` 후 `npm run build`를 실행한다.
 5. `complaintai-react-fastapi`에서 `uvicorn app.main:app --host 127.0.0.1 --port 8000`으로 실행한다.
 
 브라우저에서 `http://127.0.0.1:8000`을 연다. PostgreSQL은 로컬 포트 `5433`을 사용한다.
+
+현재 부서는 노동·기업, 교통·국토, 주택·건축, 환경·위생, 문화·행정·안전, 보건·복지, 기타다.
+기존 9개 부서 DB는 서버/워커를 중단한 뒤 `complaintai-react-fastapi`에서
+`python scripts/merge_to_seven_departments.py --apply`로 이전한다. 부서 통합에 `init.sql`을 실행하지 않는다.
+계정과 상세 절차는 [React + FastAPI README](complaintai-react-fastapi/README.md)에 있다.
 
 ## 데이터베이스 초기화 주의사항
 

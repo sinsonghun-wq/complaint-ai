@@ -49,7 +49,11 @@ docker exec complaintai-db pg_restore -U complaintai -d complaintai --data-only 
 
 ## 데이터 없이 새 개발 환경 구성
 
-현재 부서는 노동, 기업, 교통, 주택·건축, 환경·위생, 건설·국토, 문화·행정·안전, 보건·복지, 기타다. 기존 7개 관리자 교체는 `complaintai-react-fastapi/scripts/migrate_to_nine_departments.py --apply`로 수행한다. 이 이전 작업에서는 `init.sql`을 실행하지 않는다(기존 민원·일반 사용자 유지).
+현재 부서는 노동·기업, 교통·국토, 주택·건축, 환경·위생, 문화·행정·안전, 보건·복지, 기타다. 노동/기업과 교통/건설·국토를 각각 통합했다.
+
+기존 9개 부서 DB는 서버/워커를 중단한 뒤 `complaintai-react-fastapi`에서 `python scripts/merge_to_seven_departments.py --apply`로 이전한다. `--apply` 없이 실행하면 대상만 조회한다. 테이블 구조·기존 민원·일반 사용자·다른 5개 관리자 계정은 유지하고 통합 대상 관리자만 새 2개로 교체한다. 답변·작업·문서·헤더 매핑·조직 소속의 계정 참조도 이전하며, 옛 계정 토큰은 더 이상 사용할 수 없다. 같은 스크립트를 재실행해도 새 계정 비밀번호는 바뀌지 않는다.
+
+이 이전 작업에서는 `init.sql`이나 `seed_demo_accounts.sql`을 실행하지 않는다. 과거 `migrate_to_nine_departments.py`와 `migrate_to_seven_departments.sql`은 현재 체계에 실행하지 않는다. 기존 임베딩 벡터는 모두 보존해 유사도 검색을 유지한다. 변경된 부서명이 포함된 기존 벡터는 `analysis_metadata.department_merge.needs_reembedding=true`로 표시하며 필요하면 순차 재임베딩한다. 검색 권한/부서 필터는 벡터가 아닌 새 DB 카테고리를 기준으로 적용된다.
 
 빈 Docker 볼륨에서는 Compose가 `01-init.sql` → `02-seed-demo-accounts.sql` 순서로 실행한다. 이미 있는 볼륨에서는 자동으로 재실행되지 않는다.
 

@@ -43,6 +43,8 @@ def migrate_category(category, title='', content=''):
 
 
 def migrate_departments(conn):
+    if set(CATEGORIES) != {department for department, _, _ in ADMIN_ACCOUNTS}:
+        raise RuntimeError('Historical nine-department migration is disabled for this configuration. Use scripts/merge_to_seven_departments.py instead.')
     with conn.transaction():
         conn.execute('LOCK TABLE app_users,complaints,complaint_responses,import_jobs,csv_schema_mappings,department_documents,organization_members IN SHARE ROW EXCLUSIVE MODE')
         admins = conn.execute("SELECT id,owner_id,username,department FROM app_users WHERE account_role='admin'").fetchall()

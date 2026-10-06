@@ -11,11 +11,13 @@ from pathlib import Path
 import httpx
 
 from .settings import EMBEDDING_API_URL, EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT_MS, LLM_MODEL, LLM_TIMEOUT_MS, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
+from .rule_classifier import classify_rules
 
 DEPARTMENTS = json.loads(Path(__file__).with_name('departments.json').read_text(encoding='utf-8'))
 CATEGORIES = [item['name'] for item in DEPARTMENTS]
 KEYWORDS = {item['name']: item['keywords'] for item in DEPARTMENTS}
 DEPARTMENT_GUIDANCE = '\n'.join(f"- {item['name']}: {item['description']}" for item in DEPARTMENTS)
+PROMPT_VERSION = 'complaintai-ko-seven-context-v4'
 _embedding_unavailable_until = 0.0
 
 
@@ -29,18 +31,31 @@ def redact(value: Any) -> str:
     return re.sub(r"\b\d{6}[- ]?[1-4]\d{6}\b", "[개인정보 제외]", text)
 
 
-def fallback(title: str, content: str, reason: str = "LLM을 사용할 수 없어 규칙 기반 처리로 저장했습니다.") -> dict[str, Any]:
+def fallback(title: str, content: str, reason: str | None = None) -> dict[str, Any]:
     content = redact(content)
     sentences = re.findall(r"[^.!?。]+[.!?。]?", content) or [content]
     summary = clean(" ".join(sentences[:3]))[:700]
     source = f"{title} {content}".lower()
-    ranked = sorted(((category, sum(word in source for word in words)) for category, words in KEYWORDS.items()), key=lambda item: item[1], reverse=True)
-    category, score = ranked[0]
-    return {"title": clean(title) or summary[:40] or "제목 없음", "content": content, "summary": summary, "key_points": ["민원 대상과 발생 상황 확인", "생활 불편 및 안전 문제 검토", "민원인의 요청사항 확인"], "urgency": "high" if re.search(r"위험|사고|긴급|화재|붕괴", content) else "medium", "needs_review": len(content) < 20, "review_reason": "내용이 부족하여 검토가 필요합니다." if len(content) < 20 else None, "category": category if score else "기타", "confidence": 0.8 if score >= 3 else (0.6 if score else 0.3), "reason": reason, "keywords": KEYWORDS[category][:5] if score else [], "processing_mode": "fallback", "model": None, "prompt_version": "complaintai-ko-nine-v2"}
+    decision = classify_rules(source, KEYWORDS)
+    review = []
+    if len(content) < 20:
+        review.append('내용이 부족하여 검토가 필요합니다.')
+    if decision['requires_llm']:
+        review.append('규칙 점수가 낮거나 부서 간 점수 차이가 작아 LLM 확인이 필요합니다.')
+    elif not decision['top_score']:
+        review.append('부서를 판단할 키워드가 없어 검토가 필요합니다.')
+    return {"title": clean(title) or summary[:40] or "제목 없음", "content": content, "summary": summary,
+            "key_points": ["민원 대상과 발생 상황 확인", "생활 불편 및 안전 문제 검토", "민원인의 요청사항 확인"],
+            "urgency": "high" if re.search(r"위험|사고|긴급|화재|붕괴", content) else "medium",
+            "needs_review": bool(review), "review_reason": ' '.join(review) or None,
+            "category": decision['category'], "confidence": decision['confidence'],
+            "reason": reason or f"문맥·가중치 규칙으로 1차 판단했습니다. (점수 {decision['top_score']}, 차이 {decision['margin']})",
+            "keywords": [hit['keyword'] for hit in decision['matched'][decision['category']]][:5],
+            "rule_decision": decision, "processing_mode": "fallback", "model": None, "prompt_version": PROMPT_VERSION}
 
 
 def prompt(title: str, content: str) -> str:
-    return f"당신은 대한민국 민원 데이터를 정확하고 중립적으로 처리하는 AI다. 원문에 없는 사실·기관·법령·해결책·날짜를 만들지 말고 개인정보는 [개인정보 제외]로 처리한다. 허용 category 중 하나만 고른다: {', '.join(CATEGORIES)}. 민원인의 가장 직접적인 요청에 따라 하나만 선택한다. 여러 분야면 시급한 핵심 요청을 우선하며, 법률 민원은 법률이 적용되는 분야로 분류한다. 확신이 낮으면 needs_review=true로 표시한다. 부서별 기준:\n{DEPARTMENT_GUIDANCE}\nJSON만 반환한다. {{\"title\":\"짧은 제목\",\"summary\":\"2~4문장 요약\",\"key_points\":[\"핵심 쟁점\"],\"urgency\":\"low|medium|high\",\"needs_review\":false,\"review_reason\":null,\"category\":\"허용 category\",\"confidence\":0.0,\"reason\":\"분류 근거 한 문장\",\"keywords\":[\"핵심어\"]}}\n\n민원 제목:\n{clean(title)}\n\n민원 원문:\n{redact(content)}"
+    return f"당신은 대한민국 민원 데이터를 정확하고 중립적으로 처리하는 AI다. 원문에 없는 사실·기관·법령·해결책·날짜를 만들지 말고 개인정보는 [개인정보 제외]로 처리한다. 허용 category 중 하나만 고른다: {', '.join(CATEGORIES)}. 민원인의 가장 직접적인 요청에 따라 하나만 선택한다. 여러 분야면 시급한 핵심 요청을 우선하며, 법률 민원은 법률이 적용되는 분야로 분류한다. 예약 대기는 대기환경이 아니며 상품 인도는 보행 공간이 아니다. 층간소음은 주택·건축을 우선하고 공장·공사장 소음은 환경·위생을 우선한다. 임대·전세 보증금은 주택·건축이며 일반 보증금은 계약 대상을 확인한다. 확신이 낮으면 needs_review=true로 표시한다. 부서별 기준:\n{DEPARTMENT_GUIDANCE}\nJSON만 반환한다. {{\"title\":\"짧은 제목\",\"summary\":\"2~4문장 요약\",\"key_points\":[\"핵심 쟁점\"],\"urgency\":\"low|medium|high\",\"needs_review\":false,\"review_reason\":null,\"category\":\"허용 category\",\"confidence\":0.0,\"reason\":\"분류 근거 한 문장\",\"keywords\":[\"핵심어\"]}}\n\n민원 제목:\n{clean(title)}\n\n민원 원문:\n{redact(content)}"
 
 
 async def analyze(title: str, content: str) -> dict[str, Any]:
@@ -54,9 +69,9 @@ async def analyze(title: str, content: str) -> dict[str, Any]:
             raw = json.loads(response.json()["message"]["content"].replace("```json", "").replace("```", "").strip())
         if raw.get("category") not in CATEGORIES or not clean(raw.get("summary")):
             raise ValueError("LLM JSON validation failed")
-        return {**safe, **raw, "title": clean(raw.get("title")) or safe["title"], "content": redact(content), "summary": clean(raw["summary"])[:900], "category": raw["category"], "urgency": raw.get("urgency") if raw.get("urgency") in {"low", "medium", "high"} else "medium", "processing_mode": "llm", "model": LLM_MODEL}
+        return {**safe, **raw, "title": clean(raw.get("title")) or safe["title"], "content": redact(content), "summary": clean(raw["summary"])[:900], "category": raw["category"], "urgency": raw.get("urgency") if raw.get("urgency") in {"low", "medium", "high"} else "medium", "processing_mode": "llm", "model": LLM_MODEL, "llm_attempted": True, "rule_decision": safe['rule_decision']}
     except Exception as error:
-        return fallback(title, content, f"LLM을 사용할 수 없어 규칙 기반 처리로 저장했습니다. ({error})")
+        return {**fallback(title, content, f"LLM을 사용할 수 없어 규칙 기반 처리로 저장했습니다. ({error})"), "llm_attempted": True}
 
 
 def fingerprint(content: str) -> str:

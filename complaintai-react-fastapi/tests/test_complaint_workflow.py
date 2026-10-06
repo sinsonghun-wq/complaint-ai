@@ -28,7 +28,7 @@ class ComplaintWorkflowTests(unittest.TestCase):
         self.client.__enter__()
         self.user = self.account("user")
         self.other_user = self.account("user")
-        self.admin = self.account("admin", "건설·국토")
+        self.admin = self.account("admin", "교통·국토")
         self.other_admin = self.account("admin", "환경·위생")
 
     def tearDown(self):
@@ -56,7 +56,7 @@ class ComplaintWorkflowTests(unittest.TestCase):
     def complaint(self):
         with connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("INSERT INTO complaints(title,content,summary,category,owner_user_id) VALUES('도로 보수 요청','도로에 구멍이 있습니다. 보수해 주세요.','도로 보수 요청','건설·국토',%s) RETURNING id", (self.user["owner_id"],))
+                cur.execute("INSERT INTO complaints(title,content,summary,category,owner_user_id) VALUES('도로 보수 요청','도로에 구멍이 있습니다. 보수해 주세요.','도로 보수 요청','교통·국토',%s) RETURNING id", (self.user["owner_id"],))
                 identifier = cur.fetchone()["id"]
         self.ids.append(identifier)
         return identifier
@@ -67,7 +67,7 @@ class ComplaintWorkflowTests(unittest.TestCase):
         with connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("UPDATE complaints SET source_file='workflow-test.csv' WHERE id=%s", (uploaded,))
-        path = "/api/complaints?category=" + "건설·국토"
+        path = "/api/complaints?category=" + "교통·국토"
         for source, identifier, submitted in (("user", direct, True), ("file", uploaded, False)):
             data = self.request("GET", path + "&source=" + source).json()
             self.assertEqual(data["total"], 1)
@@ -127,7 +127,7 @@ class ComplaintWorkflowTests(unittest.TestCase):
         self.assertFalse(self.ai_patch.new.called)
         asyncio.run(classify_submission(row['id'], row['analysis_revision']))
         detail = self.request('GET', f"/api/complaints/{row['id']}").json()['complaint']
-        self.assertEqual(detail['category'], '건설·국토')
+        self.assertEqual(detail['category'], '교통·국토')
         self.assertEqual(detail['analysis_state'], 'completed')
         self.assertEqual(self.request('POST', '/api/complaints', self.admin, json={'content': '관리자 작성'}).status_code, 403)
 
@@ -274,7 +274,7 @@ class ComplaintWorkflowTests(unittest.TestCase):
         self.assertEqual(self.request("POST", f"/api/department/complaints/{identifier}/start", self.user).status_code, 403)
         self.assertEqual(self.request("GET", f"/api/complaints/{identifier}", self.other_admin).status_code, 200)
 
-    def test_all_nine_admins_can_only_manage_own_department(self):
+    def test_all_seven_admins_can_only_manage_own_department(self):
         identifier = self.complaint()
         admins = [self.account('admin', category) for category in CATEGORIES]
         for index, category in enumerate(CATEGORIES):

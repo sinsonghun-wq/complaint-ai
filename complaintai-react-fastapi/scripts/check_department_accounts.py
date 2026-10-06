@@ -7,7 +7,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.ai import CATEGORIES
-from app.department_migration import ADMIN_ACCOUNTS
+from app.department_merge import ADMIN_ACCOUNTS
 from app.security import issue_token
 
 with httpx.Client(base_url='http://127.0.0.1:8000', timeout=10) as client:
@@ -20,8 +20,8 @@ with httpx.Client(base_url='http://127.0.0.1:8000', timeout=10) as client:
         context.raise_for_status()
         assert context.json()['categories'] == [department]
         print(json.dumps({'username':username,'department':department,'login':'ok'}, ensure_ascii=True))
-    # All seven retired seed IDs must fail even if an old valid signature exists.
-    for i in range(101,108):
+    # Historical accounts and all four merged-away accounts must reject old tokens.
+    for i in [*range(101,108), 201, 202, 203, 206]:
         token = issue_token({'id':f'00000000-0000-4000-8000-{i:012d}', 'owner_id':f'00000000-0000-4000-9000-{i:012d}', 'account_role':'admin'})
         assert client.get('/api/complaints/counts', headers={'Authorization':'Bearer '+token}).status_code == 401
     print(json.dumps({'admin_logins':len(CATEGORIES),'retired_tokens':'rejected'}, ensure_ascii=True))

@@ -18,6 +18,10 @@ export default function App() {
     try { data = raw ? JSON.parse(raw) : {}; } catch {
       throw new Error(response.ok ? "처리 서버가 올바른 결과를 반환하지 않았습니다. 서버 주소를 확인해 주세요." : `처리 서버 응답을 읽지 못했습니다. (HTTP ${response.status})`);
     }
+    if (response.status === 401 && auth?.token) {
+      // Removed administrator accounts must not retain a stale department UI.
+      sessionStorage.removeItem(key); setAuth(null);
+    }
     if (!response.ok) throw new Error(data.detail || data.message || "요청을 처리하지 못했습니다.");
     return data;
   }, [headers, server]);

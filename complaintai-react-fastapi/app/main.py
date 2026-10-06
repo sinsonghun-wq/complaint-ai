@@ -419,7 +419,7 @@ def hwp_records(path: Path, filename: str) -> list[dict[str, Any]]:
 
 
 def insert_complaint(conn: psycopg.Connection, record: dict[str, Any], source_file: str | None, source_row: int | None, stored_owner: str | None, vector: list[float] | None = None) -> bool:
-    metadata = json.dumps({key: record.get(key) for key in ["key_points", "urgency", "needs_review", "review_reason", "reason", "keywords"]}, ensure_ascii=False)
+    metadata = json.dumps({key: record.get(key) for key in ["key_points", "urgency", "needs_review", "review_reason", "reason", "keywords", "confidence", "rule_decision", "llm_attempted"]}, ensure_ascii=False)
     with conn.cursor() as cur:
         cur.execute("""INSERT INTO complaints (title,content,summary,category,source_file,source_row,content_fingerprint,processing_mode,llm_model,embedding_model,prompt_version,analysis_metadata,embedding,owner_user_id)
             SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector,%s
@@ -432,8 +432,11 @@ async def save_records(records: list[dict[str, Any]], actor: dict[str, Any], sou
     saved = skipped = 0
     with connection() as conn:
         for item in records:
-            record = await analyze(str(item.get("title", "")), str(item.get("content", ""))) if item.get("use_ai") else fallback(str(item.get("title", "")), str(item.get("content", "")))
-            if item.get("category") in CATEGORIES and not item.get("use_ai"):
+            title, content = str(item.get("title", "")), str(item.get("content", ""))
+            record = fallback(title, content)
+            if item.get("use_ai") or should_use_import_llm(item, record):
+                record = await analyze(title, content)
+            if item.get("category") in CATEGORIES and not item.get("use_ai") and record.get('processing_mode') != 'llm' and not record['rule_decision']['requires_llm']:
                 record["category"] = item["category"]
             if not record["content"]:
                 continue
@@ -489,7 +492,7 @@ async def classify_submission(complaint_id: int, revision: int) -> None:
         except Exception:
             record = fallback(row['title'], row['content'])
         # Publish the department before the optional, potentially slow embedding.
-        metadata = json.dumps({key: record.get(key) for key in ['key_points', 'urgency', 'needs_review', 'review_reason', 'reason', 'keywords']}, ensure_ascii=False)
+        metadata = json.dumps({key: record.get(key) for key in ['key_points', 'urgency', 'needs_review', 'review_reason', 'reason', 'keywords', 'confidence', 'rule_decision', 'llm_attempted']}, ensure_ascii=False)
         with connection() as conn:
             result = conn.execute("""UPDATE complaints SET summary=%s,category=%s,analysis_state='completed',
                 processing_mode=%s,llm_model=%s,prompt_version=%s,analysis_metadata=%s::jsonb
@@ -878,22 +881,31 @@ def csv_rows(path: Path, encoding: str):
         yield from csv.DictReader(source)
 
 
+def should_use_import_llm(record: dict[str, Any], result: dict[str, Any], *, csv_mode: bool = False) -> bool:
+    if not LLM_IMPORT_ENABLED or not str(record.get('content') or '').strip():
+        return False
+    decision = result.get('rule_decision') or {}
+    # A review flag must not suppress an ambiguity-driven LLM request. Route ties,
+    # small margins and weak single-term signals before the no-evidence shortcut.
+    if decision.get('requires_llm'):
+        return True
+    if not csv_mode:
+        return False
+    # Preserve the existing bulk no-keyword policy; zero scores are lack of
+    # evidence, not a tie between departments with positive evidence.
+    if result.get('needs_review') and len(result.get('content') or '') < 20:
+        return False
+    if result.get('category') == '기타' and len(record['content'].strip()) >= CSV_RULE_OTHER_MIN_CONTENT_CHARS:
+        return False
+    return float(result.get('confidence') or 0) < CSV_LLM_CONFIDENCE_THRESHOLD
+
+
 async def analyze_csv_batch(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     def rule_result(record: dict[str, Any]) -> dict[str, Any]:
         return {**fallback(record["title"], record["content"]), "source_row": record["source_row"], "processing_mode": "rule"}
 
-    def should_use_llm(record: dict[str, Any], result: dict[str, Any]) -> bool:
-        if not LLM_IMPORT_ENABLED or result.get("needs_review"):
-            return False
-        # A sufficiently detailed complaint without any department signal is
-        # safely kept in the catch-all category.  Sending every such row to the
-        # LLM would make consumer-style CSV imports impractically slow.
-        if result.get("category") == "기타" and len(record["content"].strip()) >= CSV_RULE_OTHER_MIN_CONTENT_CHARS:
-            return False
-        return float(result.get("confidence") or 0) < CSV_LLM_CONFIDENCE_THRESHOLD
-
     prepared = [(record, rule_result(record)) for record in records]
-    llm_candidates = [(record, result) for record, result in prepared if should_use_llm(record, result)]
+    llm_candidates = [(record, result) for record, result in prepared if should_use_import_llm(record, result, csv_mode=True)]
     if not llm_candidates:
         return [result for _, result in prepared]
     semaphore = asyncio.Semaphore(LLM_IMPORT_CONCURRENCY)
@@ -903,7 +915,7 @@ async def analyze_csv_batch(records: list[dict[str, Any]]) -> list[dict[str, Any
             result = await analyze(record["title"], record["content"])
             # Bulk CSV imports do not retry a 60-second local model timeout.
             # The rule result is retained when the LLM is unavailable.
-            return record["source_row"], ({**result, "source_row": record["source_row"]} if result.get("processing_mode") == "llm" else rule)
+            return record["source_row"], ({**result, "source_row": record["source_row"]} if result.get("processing_mode") == "llm" else {**rule, 'llm_attempted': True, 'reason': result.get('reason') or 'LLM 확인에 실패해 규칙 결과를 유지했습니다.'})
 
     llm_results = dict(await asyncio.gather(*(analyze_one(record, rule) for record, rule in llm_candidates)))
     return [llm_results.get(record["source_row"], rule) for record, rule in prepared]
