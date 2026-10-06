@@ -38,6 +38,7 @@ def insertRequest(title:str,content:str)-> dict:
     """
     사용자가 민원 접수를 원하거나 접수 의사를 표현할 경우 접수를 진행할 수 있는 form을 좌측에 띄워줍니다.
     form은 민원의 제목을 나타내는 title과 민원의 내용을 나타내는 content로 이루어져 있습니다.
+    만약, 민원의 content만 받은 경우 title은 content를 요약한 내용으로 추론하여 설정합니다.
     사용자가 구체적인 접수의 내용을 입력했는지에 따라 다른 방식으로 민원인을 돕습니다.
     
     만약, 사용자가 구체적인 접수의 내용을 입력했다면 좌측에 title과 content로 구성된 form을 채워주고 민원인에게 보여줍니다.
