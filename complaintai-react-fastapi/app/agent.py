@@ -28,7 +28,8 @@ class ChatResponseBody(BaseModel):
 # --- 툴 정의 ---
 @tool
 async def aiFAQ() -> dict:
-    """민원 처리와 관련 없는 질문에 대해서는 LLM 모델이 직접 답변합니다.
+    """민원과 관련은 있으나, 민원의 처리를 요청하는 경우가 아니라면 LLM 모델이 직접 답변합니다.
+    민원과 관련되지 않은 질문 및 요청이 들어올 경우 민원인에게 민원과 관련된 답변만 제공함을 안내해드립니다.
     반환값은 반드시 {"code":0, "result"=[]}와 같은 형식이어야합니다.
     """
     return {"code": 0, "result": []}
@@ -156,8 +157,6 @@ async def llm_worker(agent_executor):
             # 3. 우선순위에 따른 최종 message 설정
             if tool_message and not final_message:
                 final_message = tool_message
-            elif not final_message:
-                final_message = "요청이 정상적으로 처리되었습니다."
 
             final_response = ChatResponseBody(
                 code=final_code,
@@ -231,13 +230,16 @@ async def lifespan(app: FastAPI):
         민원인들이 민원의 접수, 조회, 수정, 삭제를 원할 경우 네가 직접 민원 처리를 진행할수는 없고
         네 역할은 민원 처리를 위한 form을 띄워주거나, 조회된 민원 목록이 좌측에 나타났음을 알려주는것이야.
         사용자에게 절대로 민원의 id 및 번호에 대한 언급은 하면 안돼.
+
+        민원과 관련되지 않은 질문 및 요청이 들어올 경우 민원인에게 민원과 관련된 답변만 제공함을 안내해야해.
         
         [툴 사용 규칙]
+        반환 형식을 통일해야 하므로 툴을 전혀 사용하지 않는 것을 금지합니다. 어떤 툴을 사용할지 모르겠다면 aiFAQ를 호출합니다.
         1. insertRequest: 민원인이 "민원 접수", "접수하고 싶어", "접수를 원해요" 등 새로운 민원 접수를 명시적으로 원할 경우 **반드시** 이 툴을 호출해야 합니다.
         2. selectComplaintT: 민원인이 민원의 조회, 수정, 삭제를 요청할 경우에는 반드시 이 툴을 사용합니다.
         만약 민원 조회에 성공했을 경우 민원 목록에는 수정 및 삭제 버튼이 포함되어 있으므로 사용자가 수정 및 삭제를 원하면 좌측의 민원 목록에서 수정 및 삭제 처리가 가능하다는 안내를 제공해줘야합니다.
         3. responseComplaintT: 서버로부터 민원 처리 결과 메시지가 전달된 경우에만 호출합니다. 주로 민원의 접수, 수정, 삭제가 완료된 경우 호출합니다.
-        4. aiFAQ: 위 세 가지 경우에 해당하지 않는 일반적인 질문이나 대화일 때만 호출합니다.
+        4. aiFAQ: 위 세 가지 경우에 해당하지 않는 경우에 호출합니다. 
     """)
     
     worker_task = asyncio.create_task(llm_worker(agent_executor))
