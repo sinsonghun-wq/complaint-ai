@@ -77,7 +77,6 @@ def counts(actor: Annotated[dict, Depends(actor_from_auth)]):
         args, clause = (actor["owner_id"],), "owner_user_id=%s AND NOT (complaint_status='취소' AND cancelled_by_role IS NOT DISTINCT FROM 'user')"
     rows = fetch_all(f"SELECT category,COUNT(*)::int count FROM complaints WHERE deleted_at IS NULL AND category IS NOT NULL AND {clause} GROUP BY category", args)
     deleted = fetch_one(f"SELECT COUNT(*)::int count FROM complaints WHERE deleted_at IS NOT NULL AND {clause}", args)
-    logger.info({"categories": rows, "deleted": deleted["count"]})
     return {"categories": rows, "deleted": deleted["count"]}
 
 
