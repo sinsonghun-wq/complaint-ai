@@ -29,10 +29,13 @@ from .ai import CATEGORIES, analyze, embedding, fallback, fingerprint, infer_csv
 from .db import connection, fetch_all, fetch_one
 from .security import actor_from_auth, current_account, issue_token, password_hash, public_user, uuid4, verify_password
 from .worker_manager import ensure_csv_worker
+from .rag_api import router as rag_router
+from .rag_schema import ensure_rag_schema
 from .settings import CSV_LLM_CONFIDENCE_THRESHOLD, CSV_MAX_UPLOAD_BYTES, CSV_RULE_OTHER_MIN_CONTENT_CHARS, DOCUMENT_MAX_UPLOAD_BYTES, FILE_STORAGE_DIR, IMPORT_PROGRESS_ROWS, LLM_IMPORT_CONCURRENCY, LLM_IMPORT_ENABLED, MAX_BATCH_SIZE, TESSDATA_DIR, TESSERACT_CMD, WEB_ORIGINS
 
 app = FastAPI(title="ComplaintAI FastAPI", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=WEB_ORIGINS if WEB_ORIGINS != ["*"] else ["*"], allow_credentials=WEB_ORIGINS != ["*"], allow_methods=["*"], allow_headers=["*"])
+app.include_router(rag_router)
 
 DEPARTMENT_CATEGORIES = {category: [category] for category in CATEGORIES}
 STATUSES = ["접수", "진행중", "완료", "취소"]
@@ -448,6 +451,9 @@ async def save_records(records: list[dict[str, Any]], actor: dict[str, Any], sou
 
 @app.on_event("startup")
 async def startup() -> None:
+    ensure_rag_schema()
+    with connection() as conn:
+        conn.execute("UPDATE ai_recommendations SET status='failed',stage='failed',error_code='server_restarted',error_message='처리 서버가 재시작되었습니다. 다시 요청해 주세요.',updated_at=NOW() WHERE status IN ('queued','processing')")
     # 이전 설치 DB도 답변 임시 저장 상태를 바로 사용할 수 있도록 호환 컬럼을 보완한다.
     with connection() as conn:
         with conn.cursor() as cur:

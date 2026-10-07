@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { importPercentage } from "./importProgress.js";
 import departments from "../../app/departments.json";
+import AIRecommendations, { useRecommendations } from "./AIRecommendations.jsx";
 
 const categories = departments.map((department) => department.name);
 const statusLabel = (value) => ({ "접수": "접수 대기", "진행중": "접수 됨" }[value] || value);
@@ -22,7 +23,7 @@ export default function App() {
       // Removed administrator accounts must not retain a stale department UI.
       sessionStorage.removeItem(key); setAuth(null);
     }
-    if (!response.ok) throw new Error(data.detail || data.message || "요청을 처리하지 못했습니다.");
+    if (!response.ok) throw new Error(Array.isArray(data.detail) ? data.detail.map((item) => item.msg).join(" / ") : data.detail || data.message || "요청을 처리하지 못했습니다.");
     return data;
   }, [headers, server]);
   const saveAuth = (data) => { sessionStorage.setItem(key, JSON.stringify(data)); setAuth(data); };
@@ -61,6 +62,8 @@ function LoginScreen({ api, saveAuth, server, setServer }) {
 
 function Workspace({ auth, api, signout, server, setServer }) {
   const isAdmin = auth.user.role === "admin";
+  const recommendation = useRecommendations(api);
+  const [selectingForAI, setSelectingForAI] = useState(false);
   const [view, setView] = useState(isAdmin ? "upload" : "write");
   const [message, setMessage] = useState("");
   const [title, setTitle] = useState("");
@@ -139,7 +142,16 @@ function Workspace({ auth, api, signout, server, setServer }) {
     const timer = window.setInterval(check, 2000);
     return () => { stopped = true; window.clearInterval(timer); };
   }, [api, editing?.id, selected?.id, view]);
-  const navigate = (next, keepMessage = false) => { setView(next); if (!keepMessage) setMessage(""); };
+  const navigate = (next, keepMessage = false) => { setView(next); setSelectingForAI(false); if (!keepMessage) setMessage(""); };
+  const chooseExistingForAI = () => {
+    if (recommendation.busy) return;
+    setPage(1); setRecords([]); navigate("submitted"); setSelectingForAI(true);
+  };
+  const selectForAI = (record) => {
+    if (recommendation.busy || record.complaint_status === "취소") return;
+    navigate("ai-recommendations"); recommendation.reset();
+    recommendation.start({ complaint_id: record.id }, { title: record.title, content: record.content, showTitle: true });
+  };
 
   const summarize = async () => {
     await submitComplaint();
@@ -316,8 +328,8 @@ function Workspace({ auth, api, signout, server, setServer }) {
       setSelected(null); setMessage(`${category} 부서로 전달했습니다.`); await refresh(); navigate("categories", true);
     } catch (error) { setMessage(error.message); } finally { setActionBusy(false); }
   };
-  const navItems = isAdmin ? [["upload", "새 민원"], ["categories", "분류 목록"], ["deleted", "삭제된 데이터"], ["intake", "민원 접수"]] : [["write", "새 민원"], ["submitted", "작성한 민원"]];
-  const pageTitle = { write: "새 민원 작성", submitted: "작성한 민원", upload: "파일에서 일괄 가져오기", categories: "분류 목록", deleted: "삭제된 데이터", intake: "민원 접수" }[view];
+  const navItems = isAdmin ? [["upload", "새 민원"], ["categories", "분류 목록"], ["deleted", "삭제된 데이터"], ["intake", "민원 접수"]] : [["write", "새 민원"], ["submitted", "작성한 민원"], ["ai-recommendations", "AI 추천 답변"]];
+  const pageTitle = { write: "새 민원 작성", submitted: "작성한 민원", "ai-recommendations": "AI 추천 답변", upload: "파일에서 일괄 가져오기", categories: "분류 목록", deleted: "삭제된 데이터", intake: "민원 접수" }[view];
   const adminCategories = categories;
   const canManageCategory = isAdmin && active === auth.user.department;
   return <div className="app">
@@ -350,7 +362,8 @@ function Workspace({ auth, api, signout, server, setServer }) {
           <button className="primary" onClick={confirmCsvMapping}>매핑 저장 후 처리 시작</button>
         </article>}
       </section>}
-      {view === "submitted" && <ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} empty="작성한 민원이 없습니다." user onEdit={edit} onDelete={remove} onFollowUp={writeFollowUp} />}
+      {view === "ai-recommendations" && !isAdmin && <AIRecommendations recommendation={recommendation} onChooseExisting={chooseExistingForAI} />}
+      {view === "submitted" && <>{selectingForAI && <div className="ai-selection-banner" role="status"><div><strong>AI 추천 답변을 확인할 민원을 선택하세요.</strong><p>선택하면 AI 추천 답변 화면으로 돌아가 자동으로 답변을 생성합니다.</p></div><button onClick={() => navigate("ai-recommendations")}>선택 취소</button></div>}<ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} empty="작성한 민원이 없습니다." user selectingForAI={selectingForAI} onSelectForAI={selectForAI} onEdit={edit} onDelete={remove} onFollowUp={writeFollowUp} /></>}
       {(view === "categories" || view === "deleted") && <><section className="category"><div className="category-head"><h2>{view === "deleted" ? "삭제된 데이터" : "분류 카테고리"}</h2></div>{view === "categories" && <div className="grid">{adminCategories.map((category) => <button key={category} className={`${active === category ? "selected" : ""} ${isAdmin && category === auth.user.department ? "department-owned" : ""}`} onClick={() => { setActive(category); setPage(1); }}><b>{counts[category] || 0}</b>{category}</button>)}</div>}</section><ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} sourceFilter={sourceFilter} setSourceFilter={setSourceFilter} deleted={view === "deleted"} canManageCategory={canManageCategory} canRunGlobalPurge={isAdmin} deletingScope={deletingScope} empty="표시할 민원이 없습니다." onSelect={chooseForIntake} onDelete={remove} onDeleteAll={removeCategory} onDepartmentPurge={deleteDepartmentAll} onRestore={restore} onHardDelete={hardDelete} /></>}
       {view === "intake" && <section className="department-workspace">
         <article className="panel intake">
@@ -394,7 +407,7 @@ function PreviousContext({ context }) {
   return <details className="answer previous-context" open><summary>이전 민원 및 완료 답변</summary><h4>{context.title}</h4><p className="original">{context.content}</p><b>이전 답변</b><p className="original">{context.response}</p>{context.previous_context && <PreviousContext context={context.previous_context} />}</details>;
 }
 
-function ComplaintList({ records, total, page, pageSize, setPage, setPageSize, sourceFilter, setSourceFilter, empty, user, deleted, canManageCategory, canRunGlobalPurge, deletingScope, onEdit, onDelete, onDeleteAll, onDepartmentPurge, onRestore, onHardDelete, onSelect, onFollowUp }) {
+function ComplaintList({ records, total, page, pageSize, setPage, setPageSize, sourceFilter, setSourceFilter, empty, user, selectingForAI, onSelectForAI, deleted, canManageCategory, canRunGlobalPurge, deletingScope, onEdit, onDelete, onDeleteAll, onDepartmentPurge, onRestore, onHardDelete, onSelect, onFollowUp }) {
   const [cancellingId, setCancellingId] = useState(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelBusy, setCancelBusy] = useState(false);
@@ -425,7 +438,7 @@ function ComplaintList({ records, total, page, pageSize, setPage, setPageSize, s
           {record.latest_response && <div className={record.latest_response_state === "draft" ? "answer draft-answer" : "answer"}><b>{record.latest_response_state === "draft" ? "임시 저장 답변 · 관리자만 확인 가능" : "답변 완료"}</b><p className="original">{record.latest_response}</p></div>}
         </>}
       </div><div className="record-actions">
-        {cancelled ? <span className="read-only">취소 · 처리 불가</span> : deleted ? record.can_manage ? <><button onClick={() => onRestore(record.id)}>복원</button>{record.complaint_status !== "완료" && <button className="danger" onClick={() => onHardDelete(record.id)}>영구 삭제</button>}</> : <span className="read-only">읽기 전용</span> : user ? <>
+        {cancelled ? <span className="read-only">취소 · 처리 불가</span> : selectingForAI ? <button className="primary" onClick={() => onSelectForAI(record)}>이 민원 선택</button> : deleted ? record.can_manage ? <><button onClick={() => onRestore(record.id)}>복원</button>{record.complaint_status !== "완료" && <button className="danger" onClick={() => onHardDelete(record.id)}>영구 삭제</button>}</> : <span className="read-only">읽기 전용</span> : user ? <>
           {record.complaint_status === "접수" && <button onClick={() => onEdit(record)}>수정</button>}
           {record.complaint_status === "진행중" && <span className="read-only">관리자가 접수를 시작하여 수정할 수 없습니다.</span>}
           {isOpen(record) && <button className="danger" onClick={() => onDelete(record.id)}>삭제</button>}

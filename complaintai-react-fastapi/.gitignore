@@ -1,5 +1,6 @@
 .env
 .venv/
+.rag-venv/
 __pycache__/
 *.py[cod]
 data/

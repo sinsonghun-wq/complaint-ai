@@ -1,5 +1,7 @@
 # ComplaintAI React + FastAPI 이식본
 
+민원인 메뉴에 `AI 추천 답변` RAG 기능을 추가했다. 모델·공식 원문 색인 준비, 실행, 평가 및 학습 판단은 [RAG 구현 안내](../docs/ai-expected-answer/rag-implementation.md)를 참고한다.
+
 기존 정적 JavaScript + Node/Express 구현을 보존한 채 별도로 만든 React + Python/FastAPI 구현이다.
 
 ## 일반 민원인 접수 흐름

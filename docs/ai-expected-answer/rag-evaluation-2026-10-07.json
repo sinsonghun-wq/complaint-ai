@@ -1,0 +1,91 @@
+{
+  "evaluated_at": "2026-10-07T03:05:02.024378+00:00",
+  "scope": "Small pilot smoke test; not measured production accuracy",
+  "cases": [
+    {
+      "case": {
+        "id": "registration",
+        "title": "온라인 전입신고 세대주 확인",
+        "content": "세대원인 제가 온라인으로 전입신고를 하려고 합니다. 세대주 확인이 필요한 경우를 알려 주세요.",
+        "expected_sources": [
+          "A04"
+        ],
+        "expected_status": "answered",
+        "keywords": [
+          "세대주",
+          "확인"
+        ]
+      },
+      "result": {
+        "answer_status": "insufficient_evidence",
+        "answer": "제공된 근거는 '온라인 전입신고 시 세대주 확인이 필요한 경우'를 설명하고 있으나, 구체적인 세대 구성 상황 (예: 단독가구, 부부가정 등) 에 따른 필수 확인 여부를 명시하지 않았습니다.",
+        "checks": [
+          "민원인의 현재 세대 구성 여부",
+          "전입 신고의 유형 (전입, 정정, 재등록 등)"
+        ],
+        "next_steps": [],
+        "generation_metrics": {
+          "total_duration": 49104783900,
+          "prompt_eval_count": 676,
+          "eval_count": 130,
+          "done_reason": "stop"
+        },
+        "citations": [
+          {
+            "number": 1,
+            "chunk_id": 1,
+            "document_id": "60f7b7b6-8cd3-4061-a9e4-9c906436b4f9",
+            "source_id": "A04",
+            "title": "온라인 전입신고 시 세대주 확인 관련 상담 FAQ",
+            "heading": "질문내용 온라인 전입신고 신청 시, 세대주 확인이 필요한 경우는 언제 인가요?",
+            "url": "https://www.110.go.kr/data/counselView.do?curPage=311&num=A01_660027&scCate1=&scCate2=&scIntt=&scText=&scType=",
+            "publisher": "정부민원안내콜센터 110",
+            "kind": "공식 FAQ",
+            "version": "2024-12-04 게시",
+            "jurisdiction": "전국",
+            "locator": "질문내용·답변",
+            "retrieved_at": "2026-10-07 02:55:20.625561+00:00",
+            "excerpt": "질문내용 온라인 전입신고 신청 시, 세대주 확인이 필요한 경우는 언제 인가요? 답변 ■ 세대주확인이란, 온라인 주민등록 신고(전입・정정・재등록 등) 시 세대원이 신청한 전입신고에 대해 세대주가 확인을 하는 서비스입니다. ■ 세대주 확인이 필요한 경우 - 세대구성 시 세대주가 아닌 세대원이 신청하는 경우 전입지 세대주의 확인이 필요합니다. - 세대편입 시 전출지의 세대주 또는 세대원이 전입지의 세대원으로 세대편입을 하면 전입지 세대주의 확인이 필요합니다. - 세대편입 시 세대주를 포함하여 전입하는 경우 전출지의 세대원이 신청하는 경우 전출지, 전입지의 세대주의 확인이 필요합니다. - 세대합가 시 전출지 세대주가 신청하면 전입지 전(前)세대주의 확인이 필요합니다. - 세대합가 시 세대원이 신청하면 전출지, 전입지 전(前)세대주의 확인이 필요합니다. ※ 본 내용은 정책 변경에 따라 수정되거나 종료될 수 있습니다. - 자료출처 : 정부24 https://www.gov.kr/",
+            "relevance_score": 0.9953373670578003,
+            "type_ids": [
+              "A03"
+            ]
+          }
+        ],
+        "models": {
+          "embedding": {
+            "model": "qwen3-embedding:0.6b",
+            "digest": "ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d",
+            "dimensions": 1024,
+            "normalization": "l2",
+            "query_instruction": "Retrieve official Korean government guidance that answers the citizen complaint, preserving conditions, exceptions and procedures.",
+            "profile": "3133cee172ec4c456e325d5a241e562dd57e170e9014136086204414a5b444d9"
+          },
+          "llm": "qwen3.5:4b",
+          "prompt_version": "complaintai-recommendation-ko-v1",
+          "reference_date": "2026-10-07",
+          "reranker": {
+            "model": "Qwen/Qwen3-Reranker-0.6B",
+            "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
+            "runtime": "transformers-cpu-fp32"
+          }
+        },
+        "timings": {
+          "embedding_seconds": 4.877,
+          "reranking_seconds": 68.035,
+          "generation_seconds": 49.126,
+          "total_seconds": 122.177
+        }
+      },
+      "automated_checks": {
+        "status_matches": false,
+        "expected_source_found": true,
+        "keywords_present": true,
+        "answered_has_citations": true
+      },
+      "automated_pass": false,
+      "seconds": 122.18,
+      "human_review": "pending"
+    }
+  ]
+}
