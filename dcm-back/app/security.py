@@ -68,7 +68,7 @@ def actor_from_auth(authorization: str | None = Header(default=None)) -> dict[st
 
 
 def current_account(actor: dict[str, Any]) -> dict[str, Any]:
-    user = fetch_one("SELECT id, owner_id, username, display_name, account_role, department, password_salt, password_hash FROM app_users WHERE id=%s", (actor["sub"],))
+    user = fetch_one("SELECT id, owner_id, username, display_name, account_role, department_id, password_salt, password_hash FROM app_users WHERE id=%s", (actor["sub"],))
     if not user:
         raise HTTPException(401, "계정을 찾을 수 없습니다.")
     return user
