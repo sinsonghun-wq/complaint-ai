@@ -55,13 +55,6 @@ def insertRequestT(title: str, content: str) -> dict:
     return {"code": 1, "result": [{"title": title, "content": content}]}
 
 @tool
-def responseComplaintT(message: str) -> dict:
-    """민원 처리 결과 메시지가 전달된 경우 이를 안내할 때 호출합니다.
-    반환값은 반드시 {"code": 3, "message": message, "result": []} 형식이어야 합니다.
-    """
-    return {"code": 3, "message": message, "result": []}
-
-@tool
 async def selectComplaintT(content: str, is_described: bool, config: RunnableConfig) -> dict:
     """민원인이 민원의 조회, 수정, 삭제를 요청한 경우에 관련 민원을 조회합니다.
         민원인이 어떤 민원을 처리하고 싶은지 묘사했다면, 그 값은 content가 됩니다.
@@ -119,13 +112,10 @@ async def llm_worker(llm, tools_dict):
             
             # agent_mode에 따라 사용할 수 있는 툴을 동적으로 필터링하여 바인딩
             # agent_mode 0: insertRequest, selectComplaintT
-            # agent_mode 1: responseComplaintT
-            # agent_mode 2: aiFAQ
+            # agent_mode 1: aiFAQ
             if agent_mode == 0:
                 active_tools = [tools_dict["insertRequestT"], tools_dict["selectComplaintT"]]
             elif agent_mode == 1:
-                active_tools = [tools_dict["responseComplaintT"]]
-            else:
                 active_tools = [tools_dict["aiFAQ"]]
 
             # 동적 툴이 바인딩된 에이전트 생성 (매 요청마다 모드별 최적화)
@@ -142,9 +132,7 @@ async def llm_worker(llm, tools_dict):
             유저가 단순히 문제 상황을 설명하는 경우 민원의 접수로 판단하고 Tool insertRequestT를 호출해.
             유저가 문제 상황을 설명하고 수정 및 삭제를 요청할 경우에는 selectComplaintT를 사용해.
 
-            agent_mode가 1일 경우: 받는 메시지는 서버의 민원 처리 결과 내용이고, 이걸 유저에게 알려줘야해.
-
-            agent_mode가 2일 경우: 민원과 관련된 사용자의 질문을 받고 적절한 대답을 해주어야해.
+            agent_mode가 1일 경우: 민원과 관련된 사용자의 질문을 받고 적절한 대답을 해주어야해.
             유저가 문제 상황을 설명하는 경우 어떻게 행동해야 하는지에 대하여 적절한 대답을 해주어야해.
             
             [규칙]
@@ -251,7 +239,6 @@ async def lifespan(app: FastAPI):
         "aiFAQ": aiFAQ,
         "insertRequestT": insertRequestT,
         "selectComplaintT": selectComplaintT,
-        "responseComplaintT": responseComplaintT
     }
     
     llm = ChatOllama(model=LLM_MODEL, temperature=0.1)
