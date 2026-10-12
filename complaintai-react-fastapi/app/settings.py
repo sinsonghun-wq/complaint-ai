@@ -23,6 +23,8 @@ DOCUMENT_MAX_UPLOAD_BYTES = int(os.getenv("DOCUMENT_MAX_UPLOAD_BYTES", str(100 *
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:7b-instruct")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 LLM_TIMEOUT_MS = int(os.getenv("LLM_TIMEOUT_MS", "60000"))
+# 민원 분석 프롬프트의 컨텍스트 길이. 카테고리 정의 블록(약 2,200자)이 들어가므로 4096 이상을 권장합니다.
+LLM_NUM_CTX = int(os.getenv("LLM_NUM_CTX", "4096"))
 LLM_IMPORT_ENABLED = os.getenv("LLM_IMPORT_ENABLED", "true").lower() == "true"
 LLM_IMPORT_CONCURRENCY = max(1, int(os.getenv("LLM_IMPORT_CONCURRENCY", "1")))
 CSV_LLM_CONFIDENCE_THRESHOLD = min(1.0, max(0.0, float(os.getenv("CSV_LLM_CONFIDENCE_THRESHOLD", "0.5"))))
