@@ -4,16 +4,15 @@ import json
 from typing import Annotated, Any
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Path, Request, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
 
-from app.agent import ChatResponseBody, enqueue_chat_request
+from app.agent import enqueue_chat_request
 from app.services.parser import csv_encoding, csv_preview, csv_rows, csv_schema_signature, default_csv_mapping, hwp_records, pdf_records, row_to_complaint, spreadsheet_records, start_import_worker, validate_csv_mapping
 from app.settings import CSV_MAX_UPLOAD_BYTES, DOCUMENT_MAX_UPLOAD_BYTES
 from app.utils.util import hide_cancelled_content, locked_complaint, require_admin, require_open_complaint, save_upload, scoped_where
 
 from ..db import connection, fetch_all, fetch_one
 from ..security import actor_from_auth, uuid4
-from ..models import CancelBody, ComplaintBody, BatchBody, CsvMappingBody, PasswordBody, ResponseBody, SignupBody, StatusBody, TransferBody, UpdateComplaintBody
+from ..models import CancelBody, ChatRequestBody, ChatResponseBody, ComplaintBody, BatchBody, CsvMappingBody, PasswordBody, ResponseBody, SignupBody, StatusBody, TransferBody, UpdateComplaintBody
 from ..dependencies import allowed, check_password, require_department, require_user, vector_literal
 from ..ai import CATEGORIES, analyze, embedding, fallback, fingerprint, infer_csv_mapping
 from ..services.complaint import classify_submission, save_records
@@ -554,12 +553,9 @@ def react_app(path: str, request: Request):
         return FileResponse(STATIC_DIR / "index.html")
     raise HTTPException(404, "React 빌드 결과가 없습니다. frontend에서 npm run build를 실행하세요.")
 
-class ChatRequestBody(BaseModel):
-    content: str
-
 @router.post("/chat", response_model=ChatResponseBody)
 async def chatAI(chatBody: ChatRequestBody, actor: Annotated[dict, Depends(actor_from_auth)]):
     user_id = actor["owner_id"]
     # 큐에 요청을 넣고 워커가 처리 완료하여 Future에 결과를 담을 때까지 비동기 대기
-    result = await enqueue_chat_request(user_id, chatBody.content)
+    result = await enqueue_chat_request(user_id, chatBody)
     return result
