@@ -1,7 +1,8 @@
+from pathlib import Path
 from typing import Any
 import uuid
 
-from fastapi import HTTPException, Path, UploadFile
+from fastapi import HTTPException, UploadFile
 
 from app.dependencies import allowed
 from app.settings import FILE_STORAGE_DIR
