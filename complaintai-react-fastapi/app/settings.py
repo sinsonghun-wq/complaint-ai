@@ -35,5 +35,7 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B")
 OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "qwen3-embedding:4b")
 EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "").rstrip("/")
 EMBEDDING_TIMEOUT_MS = int(os.getenv("EMBEDDING_TIMEOUT_MS", "60000"))
+# 실제로 임베딩에 쓰는 모델 이름 (EMBEDDING_PROVIDER 에 따라 .env 값 중 하나). DB 기록·API 응답에 이 값을 씁니다.
+ACTIVE_EMBEDDING_MODEL = OLLAMA_EMBEDDING_MODEL if EMBEDDING_PROVIDER == "ollama" else EMBEDDING_MODEL
 TESSDATA_DIR = Path(os.getenv("TESSDATA_DIR", str(ROOT / "data" / "tessdata"))).resolve()
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()

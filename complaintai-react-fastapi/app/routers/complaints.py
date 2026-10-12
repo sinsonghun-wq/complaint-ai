@@ -14,7 +14,7 @@ from ..db import connection, fetch_all, fetch_one
 from ..security import actor_from_auth, uuid4
 from ..models import CancelBody, ChatRequestBody, ChatResponseBody, ComplaintBody, BatchBody, CsvMappingBody, PasswordBody, ResponseBody, SignupBody, StatusBody, TransferBody, UpdateComplaintBody
 from ..dependencies import allowed, check_password, require_department, require_user, vector_literal
-from ..ai import CATEGORIES, analyze, embedding, fallback, fingerprint, infer_csv_mapping
+from ..ai import ACTIVE_EMBEDDING_MODEL, CATEGORIES, LLM_MODEL, analyze, embeddingForSelect, fallback, fingerprint, infer_csv_mapping
 from ..services.complaint import classify_submission, save_records
 from ..config import MAX_BATCH_SIZE, STATIC_DIR, STATUSES
 from ..logger import logger
@@ -49,10 +49,10 @@ async def analyze_endpoint(body: ComplaintBody, actor: Annotated[dict, Depends(a
     require_user(actor)
     record = await analyze(body.title, body.content)
     similar = []
-    vector = await embedding(record)
+    vector = await embeddingForSelect(record["content"])
     if vector:
         similar = fetch_all("SELECT id,title,summary,category,1-(embedding <=> %s::vector) AS similarity FROM complaints WHERE deleted_at IS NULL AND complaint_status<>'취소' AND owner_user_id=%s AND embedding IS NOT NULL ORDER BY embedding <=> %s::vector LIMIT 5", (vector_literal(vector), actor["owner_id"], vector_literal(vector)))
-    return {"analysis": record, "similar": similar, "ai": {"llm_model": "qwen2.5:7b-instruct", "embedding_model": "Qwen/Qwen3-Embedding-4B", "vector_dimension": 1536}}
+    return {"analysis": record, "similar": similar, "ai": {"llm_model": LLM_MODEL, "embedding_model": ACTIVE_EMBEDDING_MODEL, "vector_dimension": 1536}}
 
 
 @router.post("/complaints/batch", status_code=201)

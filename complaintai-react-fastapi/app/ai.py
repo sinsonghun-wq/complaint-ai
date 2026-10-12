@@ -10,7 +10,7 @@ from .logger import logger
 
 import httpx
 
-from .settings import EMBEDDING_API_URL, EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT_MS, LLM_MODEL, LLM_TIMEOUT_MS, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
+from .settings import ACTIVE_EMBEDDING_MODEL, EMBEDDING_API_URL, EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT_MS, LLM_MODEL, LLM_TIMEOUT_MS, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
 
 CATEGORIES = ["행정·안전", "국토·교통", "주택건축", "환경·위생", "보건복지", "소방", "기타"]
 KEYWORDS = {
@@ -93,15 +93,17 @@ async def infer_csv_mapping(headers: list[str], samples: list[dict[str, Any]]) -
         return {"title_column": "", "content_columns": [], "response_column": "", "category_column": "", "confidence": 0.0, "reason": f"헤더 매핑 LLM을 사용할 수 없습니다. ({error})", "source": "unavailable"}
 
 
-def embedding_document(record: dict[str, Any]) -> str:
-    return f"민원 제목: {record['title']}\n민원 원문: {record['content']}\n민원 요약: {record['summary']}\n분류 카테고리: {record['category']}\n핵심어: {', '.join(record.get('keywords') or [])}"
+async def embeddingForSelect(text: str) -> list[float] | None:
+    """민원 본문(또는 챗봇 검색 구절) 텍스트를 형식 없이 그대로 임베딩합니다.
 
-
-async def embedding(record: dict[str, Any]) -> list[float] | None:
+    저장(민원 접수·수정·일괄 저장)과 검색(/api/analyze, 챗봇 조회)이 모두 이 함수를 써서
+    같은 입력 형식·같은 모델로 벡터를 만듭니다.
+    """
     global _embedding_unavailable_until
+    if not text or not text.strip():
+        return None
     if time.monotonic() < _embedding_unavailable_until:
         return None
-    text = embedding_document(record)
     try:
         # Allow model loading and embedding generation up to the configured timeout.
         async with httpx.AsyncClient(timeout=EMBEDDING_TIMEOUT_MS / 1000) as client:
@@ -119,19 +121,3 @@ async def embedding(record: dict[str, Any]) -> list[float] | None:
     except Exception:
         _embedding_unavailable_until = time.monotonic() + 30
         return None
-
-
-"""
-중복되는 코드가 많지만, 기존 코드는 최대한 건드리지 않기 위해 따로 만들었습니다.
-사용자가 민원을 찾고 싶을 때 오직 content로만 유사도 검색을 하기 위한 함수
-"""
-async def embeddingForSelect(text:str):
-    response =None
-    async with httpx.AsyncClient(timeout=max(EMBEDDING_TIMEOUT_MS / 1000, 5)) as client:
-        response =  await client.post(f"{OLLAMA_URL}/api/embed", json={"model": OLLAMA_EMBEDDING_MODEL, "input": text, "keep_alive": "10m"})
-    response.raise_for_status(); vector = response.json().get("embeddings", [None])[0]
-    if not isinstance(vector, list) or len(vector) < 1536:
-                return None
-    vector = [float(value) for value in vector[:1536]]
-    norm = math.sqrt(sum(value * value for value in vector))
-    return [value / norm for value in vector] if norm else vector

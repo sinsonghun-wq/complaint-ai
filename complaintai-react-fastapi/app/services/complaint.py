@@ -4,7 +4,7 @@ from typing import Any
 import psycopg
 
 from ..db import connection
-from ..ai import CATEGORIES, analyze, embedding, fallback, fingerprint
+from ..ai import ACTIVE_EMBEDDING_MODEL, CATEGORIES, analyze, embeddingForSelect, fallback, fingerprint
 from ..dependencies import owner_id, vector_literal
 
 classification_slots = asyncio.Semaphore(1)
@@ -16,7 +16,7 @@ def insert_complaint(conn: psycopg.Connection, record: dict[str, Any], source_fi
         cur.execute("""INSERT INTO complaints (title,content,summary,category,source_file,source_row,content_fingerprint,processing_mode,llm_model,embedding_model,prompt_version,analysis_metadata,embedding,owner_user_id)
             SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector,%s
             WHERE NOT EXISTS (SELECT 1 FROM complaints WHERE content_fingerprint=%s AND deleted_at IS NULL AND complaint_status<>'취소' AND owner_user_id IS NOT DISTINCT FROM %s) RETURNING id""",
-            (record["title"], record["content"], record["summary"], record["category"], source_file, source_row, fingerprint(record["content"]), record.get("processing_mode", "fallback"), record.get("model"), "Qwen/Qwen3-Embedding-4B" if vector else None, record.get("prompt_version"), metadata, vector_literal(vector), stored_owner, fingerprint(record["content"]), stored_owner))
+            (record["title"], record["content"], record["summary"], record["category"], source_file, source_row, fingerprint(record["content"]), record.get("processing_mode", "fallback"), record.get("model"), ACTIVE_EMBEDDING_MODEL if vector else None, record.get("prompt_version"), metadata, vector_literal(vector), stored_owner, fingerprint(record["content"]), stored_owner))
         return cur.fetchone() is not None
 
 async def save_records(records: list[dict[str, Any]], actor: dict[str, Any], source_file: str | None = None) -> tuple[int, int]:
@@ -28,7 +28,7 @@ async def save_records(records: list[dict[str, Any]], actor: dict[str, Any], sou
                 record["category"] = item["category"]
             if not record["content"]:
                 continue
-            was_saved = insert_complaint(conn, record, item.get("source_file") or source_file, item.get("source_row"), owner_id(actor), await embedding(record))
+            was_saved = insert_complaint(conn, record, item.get("source_file") or source_file, item.get("source_row"), owner_id(actor), await embeddingForSelect(record["content"]))
             saved += int(was_saved); skipped += int(not was_saved)
         conn.commit()
     return saved, skipped
@@ -55,11 +55,11 @@ async def classify_submission(complaint_id: int, revision: int) -> None:
         if not result:
             return
     try:
-        vector = await embedding(record)
+        vector = await embeddingForSelect(record["content"])
     except Exception:
         vector = None
     if vector:
         with connection() as conn:
-            conn.execute("""UPDATE complaints SET embedding=%s::vector,embedding_model='Qwen/Qwen3-Embedding-4B'
+            conn.execute("""UPDATE complaints SET embedding=%s::vector,embedding_model=%s
                 WHERE id=%s AND analysis_revision=%s AND analysis_state='completed'
-                AND deleted_at IS NULL AND complaint_status<>'취소'""", (vector_literal(vector), complaint_id, revision))
+                AND deleted_at IS NULL AND complaint_status<>'취소'""", (vector_literal(vector), ACTIVE_EMBEDDING_MODEL, complaint_id, revision))
