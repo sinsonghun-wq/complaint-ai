@@ -41,3 +41,12 @@ class CsvMappingBody(BaseModel):
     response_column: str = ""
     category_column: str = ""
     save_mapping: bool = True
+
+class ChatResponseBody(BaseModel):
+    code: int
+    message: str = None
+    result: list = []  
+
+class ChatRequestBody(BaseModel):
+    content: str
+    agent_mode:int=0
