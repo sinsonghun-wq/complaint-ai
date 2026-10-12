@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { importPercentage } from "./importProgress.js";
 
-const categories = ["행정·안전", "국토·교통", "주택건축", "환경·위생", "보건복지", "소방", "기타"];
+const categories = ["노동·기업", "주택·건축", "교통·국토", "환경·위생","문화·행정·안전","보건·복지","기타" ];
 const statusLabel = (value) => ({ "접수": "접수 대기", "진행중": "접수 됨" }[value] || value);
 const isOpen = (record) => ["접수", "진행중"].includes(record?.complaint_status);
 const key = "complaintai.fastapi.auth";

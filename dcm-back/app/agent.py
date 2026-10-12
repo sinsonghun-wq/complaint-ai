@@ -76,8 +76,8 @@ async def selectComplaintT(content: str, is_described: bool, config: RunnableCon
     user_id = configurable.get("user_id")
     
     rows = []
-    if is_described and user_id:
-        vector = await embeddingForSelect(content)
+    vector = await embeddingForSelect(content) if is_described and user_id else None
+    if vector:
         rows = fetch_all(
             f"""
                 SELECT 
