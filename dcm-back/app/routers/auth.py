@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 @router.post("/login")
 def login(body: LoginBody):
-    user = fetch_one("SELECT id,owner_id,username,display_name,account_role,department,password_salt,password_hash FROM app_users WHERE username=%s", (body.username.strip(),))
+    user = fetch_one("SELECT id,owner_id,username,display_name,account_role,department_id,password_salt,password_hash FROM app_users WHERE username=%s", (body.username.strip(),))
     if not user or not verify_password(body.password, user["password_salt"], user["password_hash"]):
         raise HTTPException(401, "계정 또는 비밀번호가 올바르지 않습니다.")
     return {"token": issue_token(user), "user": public_user(user)}
