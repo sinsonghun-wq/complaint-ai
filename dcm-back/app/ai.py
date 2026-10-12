@@ -10,18 +10,13 @@ from .logger import logger
 
 import httpx
 
-from .settings import EMBEDDING_API_URL, EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT_MS, LLM_MODEL, LLM_TIMEOUT_MS, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
+from . import categories as category_defs
+from .settings import ACTIVE_EMBEDDING_MODEL, EMBEDDING_API_URL, EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT_MS, LLM_MODEL, LLM_NUM_CTX, LLM_TIMEOUT_MS, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
 
-CATEGORIES = ["노동·기업", "주택·건축", "교통·국토", "환경·위생","문화·행정·안전","보건·복지","기타" ]
-KEYWORDS = {
-    "노동·기업": ["노동","기업"],
-    "주택·건축": ["주택", "아파트", "건축", "공사", "재개발", "건물", "누수"],
-    "교통·국토": ["주차", "차량", "교통", "불법 주정차", "버스", "택시", "횡단보도", "등하교", "도로", "보도", "가로등", "시설", "포트홀", "인도", "표지판"],
-    "환경·위생": ["쓰레기", "악취", "소음", "위생", "환경", "폐기물", "미세먼지"],
-    "문화·행정·안전": ["행정", "안전", "생활서비스", "민원행정", "재난", "안전사고", "공공서비스"],
-    "보건·복지": ["복지", "의료", "보건", "돌봄", "장애", "노인", "지원"],
-    "기타": [],
-}
+# 카테고리 이름·설명·키워드는 categories.py 한 곳에서 관리합니다.
+CATEGORIES = list(category_defs.NAMES)
+KEYWORDS = {c.name: list(c.keywords) for c in category_defs.CATEGORIES}
+PROMPT_VERSION = "complaintai-ko-v2"   # v2: 카테고리 정의 블록 추가
 _embedding_unavailable_until = 0.0
 
 
@@ -42,11 +37,11 @@ def fallback(title: str, content: str, reason: str = "LLM을 사용할 수 없�
     source = f"{title} {summary}".lower()
     ranked = sorted(((category, sum(word in source for word in words)) for category, words in KEYWORDS.items()), key=lambda item: item[1], reverse=True)
     category, score = ranked[0]
-    return {"title": clean(title) or summary[:40] or "제목 없음", "content": content, "summary": summary, "key_points": ["민원 대상과 발생 상황 확인", "생활 불편 및 안전 문제 검토", "민원인의 요청사항 확인"], "urgency": "high" if re.search(r"위험|사고|긴급|화재|붕괴", content) else "medium", "needs_review": len(content) < 20, "review_reason": "내용이 부족하여 검토가 필요합니다." if len(content) < 20 else None, "category": category if score else "기타", "confidence": 0.8 if score >= 3 else (0.6 if score else 0.3), "reason": reason, "keywords": KEYWORDS[category][:5] if score else [], "processing_mode": "fallback", "model": None, "prompt_version": "complaintai-ko-v1"}
+    return {"title": clean(title) or summary[:40] or "제목 없음", "content": content, "summary": summary, "key_points": ["민원 대상과 발생 상황 확인", "생활 불편 및 안전 문제 검토", "민원인의 요청사항 확인"], "urgency": "high" if re.search(r"위험|사고|긴급|화재|붕괴", content) else "medium", "needs_review": len(content) < 20, "review_reason": "내용이 부족하여 검토가 필요합니다." if len(content) < 20 else None, "category": category if score else "기타", "confidence": 0.8 if score >= 3 else (0.6 if score else 0.3), "reason": reason, "keywords": [word for word in KEYWORDS[category] if word in source][:5] if score else [], "processing_mode": "fallback", "model": None, "prompt_version": PROMPT_VERSION}
 
 
 def prompt(title: str, content: str) -> str:
-    return f"당신은 대한민국 민원 데이터를 정확하고 중립적으로 처리하는 AI다. 원문에 없는 사실·기관·법령·해결책·날짜를 만들지 말고 개인정보는 [개인정보 제외]로 처리한다. 허용 category 중 하나만 고른다: {', '.join(CATEGORIES)}. JSON만 반환한다. {{\"title\":\"짧은 제목\",\"summary\":\"2~4문장 요약\",\"key_points\":[\"핵심 쟁점\"],\"urgency\":\"low|medium|high\",\"needs_review\":false,\"review_reason\":null,\"category\":\"허용 category\",\"confidence\":0.0,\"reason\":\"분류 근거 한 문장\",\"keywords\":[\"핵심어\"]}}\n\n민원 제목:\n{clean(title)}\n\n민원 원문:\n{redact(content)}"
+    return f"당신은 대한민국 민원 데이터를 정확하고 중립적으로 처리하는 AI다. 원문에 없는 사실·기관·법령·해결책·날짜를 만들지 말고 개인정보는 [개인정보 제외]로 처리한다. category 는 아래 정의를 읽고 허용 category 중 하나만 고른다: {', '.join(CATEGORIES)}.\n\n{category_defs.prompt_block()}\n\nJSON만 반환한다. {{\"title\":\"짧은 제목\",\"summary\":\"2~4문장 요약\",\"key_points\":[\"핵심 쟁점\"],\"urgency\":\"low|medium|high\",\"needs_review\":false,\"review_reason\":null,\"category\":\"허용 category\",\"confidence\":0.0,\"reason\":\"분류 근거 한 문장\",\"keywords\":[\"핵심어\"]}}\n\n민원 제목:\n{clean(title)}\n\n민원 원문:\n{redact(content)}"
 
 
 async def analyze(title: str, content: str) -> dict[str, Any]:
@@ -55,7 +50,7 @@ async def analyze(title: str, content: str) -> dict[str, Any]:
         return safe
     try:
         async with httpx.AsyncClient(timeout=LLM_TIMEOUT_MS / 1000) as client:
-            response = await client.post(f"{OLLAMA_URL}/api/chat", json={"model": LLM_MODEL, "stream": False, "format": "json", "options": {"temperature": 0, "top_p": 0.1, "num_ctx": 2048, "num_predict": 260}, "messages": [{"role": "user", "content": prompt(title, content)}]})
+            response = await client.post(f"{OLLAMA_URL}/api/chat", json={"model": LLM_MODEL, "stream": False, "format": "json", "options": {"temperature": 0, "top_p": 0.1, "num_ctx": LLM_NUM_CTX, "num_predict": 260}, "messages": [{"role": "user", "content": prompt(title, content)}]})
             logger.info(response.json())
             response.raise_for_status()
             raw = json.loads(response.json()["message"]["content"].replace("```json", "").replace("```", "").strip())
@@ -93,15 +88,17 @@ async def infer_csv_mapping(headers: list[str], samples: list[dict[str, Any]]) -
         return {"title_column": "", "content_columns": [], "response_column": "", "category_column": "", "confidence": 0.0, "reason": f"헤더 매핑 LLM을 사용할 수 없습니다. ({error})", "source": "unavailable"}
 
 
-def embedding_document(record: dict[str, Any]) -> str:
-    return f"민원 제목: {record['title']}\n민원 원문: {record['content']}\n민원 요약: {record['summary']}\n분류 카테고리: {record['category']}\n핵심어: {', '.join(record.get('keywords') or [])}"
+async def embeddingForSelect(text: str) -> list[float] | None:
+    """민원 본문(또는 챗봇 검색 구절) 텍스트를 형식 없이 그대로 임베딩합니다.
 
-
-async def embedding(record: dict[str, Any]) -> list[float] | None:
+    저장(민원 접수·수정·일괄 저장)과 검색(/api/analyze, 챗봇 조회)이 모두 이 함수를 써서
+    같은 입력 형식·같은 모델로 벡터를 만듭니다.
+    """
     global _embedding_unavailable_until
+    if not text or not text.strip():
+        return None
     if time.monotonic() < _embedding_unavailable_until:
         return None
-    text = embedding_document(record)
     try:
         # Allow model loading and embedding generation up to the configured timeout.
         async with httpx.AsyncClient(timeout=EMBEDDING_TIMEOUT_MS / 1000) as client:
@@ -119,19 +116,3 @@ async def embedding(record: dict[str, Any]) -> list[float] | None:
     except Exception:
         _embedding_unavailable_until = time.monotonic() + 30
         return None
-
-
-"""
-중복되는 코드가 많지만, 기존 코드는 최대한 건드리지 않기 위해 따로 만들었습니다.
-사용자가 민원을 찾고 싶을 때 오직 content로만 유사도 검색을 하기 위한 함수
-"""
-async def embeddingForSelect(text:str):
-    response =None
-    async with httpx.AsyncClient(timeout=max(EMBEDDING_TIMEOUT_MS / 1000, 5)) as client:
-        response =  await client.post(f"{OLLAMA_URL}/api/embed", json={"model": OLLAMA_EMBEDDING_MODEL, "input": text, "keep_alive": "10m"})
-    response.raise_for_status(); vector = response.json().get("embeddings", [None])[0]
-    if not isinstance(vector, list) or len(vector) < 1536:
-                return None
-    vector = [float(value) for value in vector[:1536]]
-    norm = math.sqrt(sum(value * value for value in vector))
-    return [value / norm for value in vector] if norm else vector
