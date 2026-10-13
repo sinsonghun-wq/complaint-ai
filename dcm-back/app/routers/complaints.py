@@ -564,6 +564,9 @@ async def chatAI(chatBody: ChatRequestBody, actor: Annotated[dict, Depends(actor
 
 
 
+# 청킹 단위 설정 (예: 한 청크당 묶을 CSV 행 개수.)
+CHUNK_ROW_SIZE = 50000
+
 @router.post("/documents", status_code=201)
 async def create_department_document(
     file: UploadFile = File(...),
@@ -592,29 +595,29 @@ async def create_department_document(
     created_by = actor.get("sub") or actor.get("owner_id")
     
     saved_count = 0
+    chunk_buffer = []
+    version = 1
 
-    with connection() as conn:
-        with conn.cursor() as cur:
-            for version, row in enumerate(csv_reader, start=1):
-                # row 데이터가 부족할 경우 예외 처리
-                if len(row) < 8:
-                    continue
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        with connection() as conn:
+            with conn.cursor() as cur:
                 
-                title = row[5]
-                question = row[6]
-                answer = row[7]
-                
-                chunk_content = f"title:{title} | question:{question} | answer: {answer}\n"
-                if not chunk_content.strip():
-                    continue
-                
-                doc_title = f"{original_name[:-4]}_{version}.csv"
-                
-                # Ollama 임베딩 요청
-                async with httpx.AsyncClient(timeout=max(EMBEDDING_TIMEOUT_MS / 1000, 5)) as client:
+                # 내부 함수: 버퍼에 쌓인 행들을 하나의 텍스트 청크로 합치고 임베딩 및 DB 저장 수행
+                async def flush_chunk(buffer: list, current_version: int):
+                    if not buffer:
+                        return 0
+                    
+                    # 묶인 행들을 하나의 텍스트 내용으로 결합
+                    chunk_content = "\n".join(buffer)
+                    if not chunk_content.strip():
+                        return 0
+                    
+                    doc_title = f"{original_name[:-4]}_{current_version}.csv"
+                    
+                    # Ollama 임베딩 요청 (청크 단위 전체 문맥에 대해 1회 요청)
                     response = await client.post(
-                        f"{OLLAMA_URL}/api/embed", # 필요에 맞게 OLLAMA_URL 사용
-                        json={"model": OLLAMA_EMBEDDING_MODEL, "input": chunk_content, "keep_alive": "10m"} # 모델명 확인 필요
+                        f"{OLLAMA_URL}/api/embed",
+                        json={"model": OLLAMA_EMBEDDING_MODEL, "input": chunk_content, "keep_alive": "10m"}
                     )
                     response.raise_for_status()
                     vector = response.json().get("embeddings", [None])[0]
@@ -637,18 +640,41 @@ async def create_department_document(
                         department_id,
                         doc_title,
                         original_name,
-                        version,
+                        current_version,
                         storage_path,
                         chunk_content,
                         vector_str,
                         created_by
                     ))
-                    saved_count += 1
+                    return 1
+
+                # 3. CSV 행(Row)을 순회하며 청크 단위로 모으기
+                for row in csv_reader:
+                    if len(row) < 8:
+                        continue
                     
-        conn.commit()
+                    title = row[5]
+                    question = row[6]
+                    answer = row[7]
+                    
+                    # 한 줄의 포맷팅
+                    row_text = f"title:{title} | question:{question} | answer: {answer}"
+                    chunk_buffer.append(row_text)
+                    
+                    # 설정한 청크 사이즈(예: 50줄)에 도달하면 DB에 저장 후 버퍼 비우기
+                    if len(chunk_buffer) >= CHUNK_ROW_SIZE:
+                        saved_count += await flush_chunk(chunk_buffer, version)
+                        chunk_buffer.clear()
+                        version += 1
+                
+                # 마지막에 남은 잔여 행 처리
+                if chunk_buffer:
+                    saved_count += await flush_chunk(chunk_buffer, version)
+                    
+            conn.commit()
 
     return {
-        "message": "부서 문서가 성공적으로 청킹되어 저장되었습니다.",
+        "message": "대용량 문서가 의미 단위로 청킹되어 성공적으로 저장되었습니다.",
         "document_id": document_id,
         "total_versions": saved_count
     }
