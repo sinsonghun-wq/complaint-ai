@@ -1,18 +1,20 @@
 import asyncio
 import csv
+import io
 import json
 from typing import Annotated, Any
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Path, Request, UploadFile
 from fastapi.responses import FileResponse
+import httpx
 
 from app.agent import enqueue_chat_request
 from app.services.parser import csv_encoding, csv_preview, csv_rows, csv_schema_signature, default_csv_mapping, hwp_records, pdf_records, row_to_complaint, spreadsheet_records, start_import_worker, validate_csv_mapping
-from app.settings import CSV_MAX_UPLOAD_BYTES, DOCUMENT_MAX_UPLOAD_BYTES
+from app.settings import CSV_MAX_UPLOAD_BYTES, DOCUMENT_MAX_UPLOAD_BYTES, EMBEDDING_TIMEOUT_MS, LLM_TIMEOUT_MS, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
 from app.utils.util import hide_cancelled_content, locked_complaint, require_admin, require_open_complaint, save_upload, scoped_where
 
 from ..db import connection, fetch_all, fetch_one
 from ..security import actor_from_auth, uuid4
-from ..models import CancelBody, ChatRequestBody, ChatResponseBody, ComplaintBody, BatchBody, CsvMappingBody, PasswordBody, ResponseBody, SignupBody, StatusBody, TransferBody, UpdateComplaintBody
+from ..models import CancelBody, ChatRequestBody, ChatResponseBody, ComplaintBody, BatchBody, CsvMappingBody, DepartmentDocumentBody, PasswordBody, ResponseBody, SignupBody, StatusBody, TransferBody, UpdateComplaintBody
 from ..dependencies import allowed, check_password, require_department, require_user, vector_literal
 from ..ai import ACTIVE_EMBEDDING_MODEL, CATEGORIES, LLM_MODEL, analyze, embeddingForSelect, fallback, fingerprint, infer_csv_mapping
 from ..services.complaint import classify_submission, save_records
@@ -52,7 +54,7 @@ async def analyze_endpoint(body: ComplaintBody, actor: Annotated[dict, Depends(a
     vector = await embeddingForSelect(record["content"])
     if vector:
         similar = fetch_all("SELECT id,title,summary,category,1-(embedding <=> %s::vector) AS similarity FROM complaints WHERE deleted_at IS NULL AND complaint_status<>'취소' AND owner_user_id=%s AND embedding IS NOT NULL ORDER BY embedding <=> %s::vector LIMIT 5", (vector_literal(vector), actor["owner_id"], vector_literal(vector)))
-    return {"analysis": record, "similar": similar, "ai": {"llm_model": LLM_MODEL, "embedding_model": ACTIVE_EMBEDDING_MODEL, "vector_dimension": 1536}}
+    return {"analysis": record, "similar": similar, "ai": {"llm_model": LLM_MODEL, "embedding_model": ACTIVE_EMBEDDING_MODEL, "vector_dimension": 1024}}
 
 
 @router.post("/complaints/batch", status_code=201)
@@ -105,9 +107,8 @@ def complaints(deleted: bool = False, category: str | None = None, limit: int = 
         ORDER BY {'deleted_at' if deleted else 'created_at'} DESC LIMIT %s OFFSET %s"""
     rows = fetch_all(sql, params)
     if actor["role"] == "admin":
-        manageable = set(allowed(actor))
         for row in rows:
-            row["can_manage"] = row["category"] in manageable
+            row["can_manage"] = True if(allowed(actor)) else False
             hide_cancelled_content(row)
     total = fetch_one(f"SELECT COUNT(*)::int count FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s)", [*scope, category, category])
     return {"complaints": rows, "total": total["count"]}
@@ -316,6 +317,7 @@ async def create_import(file: UploadFile = File(...), actor: dict = Depends(acto
     with connection() as conn:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO source_files(id,original_name,storage_path,mime_type,size_bytes) VALUES(%s,%s,%s,%s,%s)", (job_id, file.filename, str(path), file.content_type, path.stat().st_size))
+            
             cur.execute("INSERT INTO import_jobs(id,source_file,status,total_rows,storage_path,encoding,column_mapping,schema_signature,owner_user_id) VALUES(%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)", (job_id, file.filename, status, total, str(path), encoding, json.dumps(mapping, ensure_ascii=False), signature, stored_owner))
             if not needs_mapping and not stored_mapping:
                 cur.execute("INSERT INTO csv_schema_mappings(schema_signature,column_mapping,confidence,created_by_user_id) VALUES(%s,%s::jsonb,%s,%s) ON CONFLICT(schema_signature) DO NOTHING", (signature, json.dumps(mapping, ensure_ascii=False), mapping["confidence"], actor["sub"]))
@@ -424,7 +426,7 @@ async def intake(file: UploadFile = File(...), actor: dict = Depends(actor_from_
 
 @router.get("/department/context")
 def department_context(actor: Annotated[dict, Depends(actor_from_auth)]):
-    return {"department": actor.get("department"), "categories": require_department(actor), "statuses": STATUSES}
+    return {"department_id": actor.get("department_id"), "categories": require_department(actor), "statuses": STATUSES}
 
 
 def department_complaint(complaint_id: int, actor: dict) -> dict:
@@ -472,7 +474,7 @@ def create_response(complaint_id: int, body: ResponseBody, actor: Annotated[dict
                 raise HTTPException(409, "이미 답변 전송이 완료된 민원입니다.")
             # 같은 관리자가 남긴 이전 임시 답변은 교체해 한 민원에 하나의 최신 초안만 유지한다.
             cur.execute("DELETE FROM complaint_responses WHERE complaint_id=%s AND author_user_id=%s AND response_state='draft'", (complaint_id, actor["sub"]))
-            cur.execute("INSERT INTO complaint_responses(id,complaint_id,author_user_id,department,content,response_state) VALUES(%s,%s,%s,%s,%s,'draft') RETURNING id,content,response_state,created_at", (uuid4(), complaint_id, actor["sub"], actor.get("department"), content)); result = cur.fetchone()
+            cur.execute("INSERT INTO complaint_responses(id,complaint_id,author_user_id,department,content,response_state) VALUES(%s,%s,%s,%s,%s,'draft') RETURNING id,content,response_state,created_at", (uuid4(), complaint_id, actor["sub"], actor.get("department_id"), content)); result = cur.fetchone()
             cur.execute("UPDATE complaints SET complaint_status='진행중',status_updated_at=NOW() WHERE id=%s", (complaint_id,))
         conn.commit()
     return {"response": result, "complaint_status": "진행중"}
@@ -559,3 +561,94 @@ async def chatAI(chatBody: ChatRequestBody, actor: Annotated[dict, Depends(actor
     # 큐에 요청을 넣고 워커가 처리 완료하여 Future에 결과를 담을 때까지 비동기 대기
     result = await enqueue_chat_request(user_id, chatBody)
     return result
+
+
+
+@router.post("/documents", status_code=201)
+async def create_department_document(
+    file: UploadFile = File(...),
+    actor: Annotated[dict, Depends(actor_from_auth)] = None
+):
+    require_department(actor)
+    
+    # 1. 파일 형식 검증 (CSV 파일만 허용)
+    if not file.filename or not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="CSV 파일만 업로드할 수 있습니다.")
+    
+    # 2. 파일 읽기 및 텍스트 디코딩
+    contents = await file.read()
+    try:
+        decoded_content = contents.decode("utf-8")
+    except UnicodeDecodeError:
+        decoded_content = contents.decode("euc-kr")
+    
+    csv_reader = csv.reader(io.StringIO(decoded_content))
+    header = next(csv_reader, None) # 헤더 건너뛰기
+    
+    document_id = str(uuid4())
+    department_id = actor.get("department_id", 0)
+    original_name = file.filename
+    storage_path = f"data/uploads/{document_id}.csv"
+    created_by = actor.get("sub") or actor.get("owner_id")
+    
+    saved_count = 0
+
+    with connection() as conn:
+        with conn.cursor() as cur:
+            for version, row in enumerate(csv_reader, start=1):
+                # row 데이터가 부족할 경우 예외 처리
+                if len(row) < 8:
+                    continue
+                
+                title = row[5]
+                question = row[6]
+                answer = row[7]
+                
+                chunk_content = f"title:{title} | question:{question} | answer: {answer}\n"
+                if not chunk_content.strip():
+                    continue
+                
+                doc_title = f"{original_name[:-4]}_{version}.csv"
+                
+                # Ollama 임베딩 요청
+                async with httpx.AsyncClient(timeout=max(EMBEDDING_TIMEOUT_MS / 1000, 5)) as client:
+                    response = await client.post(
+                        f"{OLLAMA_URL}/api/embed", # 필요에 맞게 OLLAMA_URL 사용
+                        json={"model": OLLAMA_EMBEDDING_MODEL, "input": chunk_content, "keep_alive": "10m"} # 모델명 확인 필요
+                    )
+                    response.raise_for_status()
+                    vector = response.json().get("embeddings", [None])[0]
+
+                    vector_str = vector_literal(vector) if vector else None
+                    new_id = str(uuid4())
+
+                    # department_documents 테이블에 insert
+                    sql = """
+                        INSERT INTO department_documents (
+                            id, document_id, department_id, title, original_name, version, 
+                            storage_path, content, embedding, created_by, created_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, NOW())
+                    """
+                    
+                    cur.execute(sql, (
+                        new_id,
+                        document_id,
+                        department_id,
+                        doc_title,
+                        original_name,
+                        version,
+                        storage_path,
+                        chunk_content,
+                        vector_str,
+                        created_by
+                    ))
+                    saved_count += 1
+                    
+        conn.commit()
+
+    return {
+        "message": "부서 문서가 성공적으로 청킹되어 저장되었습니다.",
+        "document_id": document_id,
+        "total_versions": saved_count
+    }

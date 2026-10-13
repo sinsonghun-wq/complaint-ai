@@ -6,6 +6,7 @@ import psycopg
 from ..db import connection
 from ..ai import ACTIVE_EMBEDDING_MODEL, CATEGORIES, analyze, embeddingForSelect, fallback, fingerprint
 from ..dependencies import owner_id, vector_literal
+from app.settings import EMBEDDING_MODEL
 
 classification_slots = asyncio.Semaphore(1)
 classification_tasks: set[asyncio.Task] = set()

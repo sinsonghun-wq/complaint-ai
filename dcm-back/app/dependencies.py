@@ -1,14 +1,14 @@
 from typing import Any
 
 from fastapi import HTTPException
-from .config import DEPARTMENT_CATEGORIES
+from .logger import logger
 from .security import current_account, verify_password
 
 def owner_id(actor: dict[str, Any]) -> str | None:
     return None if actor["role"] == "admin" else actor["owner_id"]
 
 def allowed(actor: dict[str, Any]) -> list[str]:
-    return DEPARTMENT_CATEGORIES.get(actor.get("department"), []) if actor["role"] == "admin" else []
+    return actor.get("department_id") if actor["role"] == "admin" else []
 
 def require_department(actor: dict[str, Any]) -> list[str]:
     categories = allowed(actor)

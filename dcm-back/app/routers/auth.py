@@ -22,7 +22,7 @@ def signup(body: SignupBody):
     if not username.replace("_", "").replace("-", "").isalnum() or not 3 <= len(username) <= 30 or len(body.password) < 8:
         raise HTTPException(400, "계정은 3~30자, 비밀번호는 8자 이상이어야 합니다.")
     salt, digest = password_hash(body.password)
-    user = {"id": uuid4(), "owner_id": uuid4(), "username": username, "display_name": body.display_name.strip() or username, "account_role": "user", "department": None}
+    user = {"id": uuid4(), "owner_id": uuid4(), "username": username, "display_name": body.display_name.strip() or username, "account_role": "user", "department_id": None}
     try:
         with connection() as conn:
             with conn.cursor() as cur:

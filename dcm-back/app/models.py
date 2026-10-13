@@ -50,3 +50,13 @@ class ChatResponseBody(BaseModel):
 class ChatRequestBody(BaseModel):
     content: str
     agent_mode:int=0
+
+class DepartmentDocumentBody(BaseModel):
+    document_id: str | None = None
+    department_id: int
+    title: str
+    original_name: str
+    version: int | None = None
+    storage_path: str
+    content: str
+    embedding: list[float] | None = None

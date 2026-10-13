@@ -12,7 +12,7 @@ import httpx
 
 from . import categories as category_defs
 from . import prompts
-from .settings import ACTIVE_EMBEDDING_MODEL, EMBEDDING_API_URL, EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT_MS, LLM_MODEL, LLM_NUM_CTX, LLM_TIMEOUT_MS, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
+from .settings import EMBEDDING_API_URL, EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT_MS, LLM_MODEL, LLM_NUM_CTX, LLM_TIMEOUT_MS, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
 
 # 카테고리 이름·설명·키워드는 categories.py 한 곳에서 관리합니다.
 CATEGORIES = list(category_defs.NAMES)
@@ -113,11 +113,8 @@ async def embeddingForSelect(text: str) -> list[float] | None:
                 response = await client.post(f"{OLLAMA_URL}/api/embed", json={"model": OLLAMA_EMBEDDING_MODEL, "input": text, "keep_alive": "10m"})
                 response.raise_for_status(); vector = response.json().get("embeddings", [None])[0]
             else:
-                response = await client.post(f"{EMBEDDING_API_URL}/v1/embeddings", json={"model": EMBEDDING_MODEL, "input": text, "dimensions": 1536, "encoding_format": "float"})
+                response = await client.post(f"{EMBEDDING_API_URL}/v1/embeddings", json={"model": EMBEDDING_MODEL, "input": text, "dimensions": 1024, "encoding_format": "float"})
                 response.raise_for_status(); vector = response.json()["data"][0]["embedding"]
-        if not isinstance(vector, list) or len(vector) < 1536:
-            return None
-        vector = [float(value) for value in vector[:1536]]
         norm = math.sqrt(sum(value * value for value in vector))
         return [value / norm for value in vector] if norm else vector
     except Exception:
