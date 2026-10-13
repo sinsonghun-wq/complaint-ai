@@ -8,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from .db import connection, fetch_one
+from .chat_intent import ChatIntentBody, ChatIntentResult, IntentUnavailable, classify_chat_intent
 from .rag import run_recommendation
 from .security import actor_from_auth
 
@@ -97,6 +98,15 @@ def create(body: RecommendationBody, background: BackgroundTasks, actor: Annotat
              json.dumps(conversation, ensure_ascii=False), body.parent_recommendation_id)).fetchone()
     background.add_task(run_recommendation, identifier)
     return row
+
+
+@router.post('/intent', response_model=ChatIntentResult)
+async def intent(body: ChatIntentBody, actor: Annotated[dict, Depends(actor_from_auth)]):
+    citizen(actor)
+    try:
+        return await classify_chat_intent(body)
+    except IntentUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @router.get('/{recommendation_id}')

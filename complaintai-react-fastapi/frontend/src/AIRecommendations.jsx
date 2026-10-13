@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import CitizenComplaintTools from './CitizenComplaintTools.jsx';
 
 const stageLabels = {
+  routing: '요청하신 답변이나 기능을 확인하고 있어요.',
   queued: '답변 순서를 기다리고 있어요.',
   embedding: '말씀하신 내용을 살펴보고 있어요.',
   retrieval: '관련 공식 자료를 찾고 있어요.',
@@ -14,6 +16,34 @@ export function useRecommendations(api) {
   const [job, setJob] = useState(null);
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [toolRequest, setToolRequest] = useState(null);
+  const [toolContext, updateToolContext] = useState(null);
+  const toolSequence = useRef(0);
+  const openTool = useCallback((request = 'list') => {
+    const next = typeof request === 'string' ? { intent: request } : request;
+    if (!['create', 'list', 'edit', 'delete'].includes(next.intent)) return;
+    updateToolContext(null);
+    setToolRequest({ ...next, key: ++toolSequence.current });
+    setToolsOpen(true);
+  }, []);
+  const closeTools = useCallback(() => setToolsOpen(false), []);
+  const toggleTools = () => {
+    if (toolsOpen) setToolsOpen(false);
+    else if (toolRequest) setToolsOpen(true);
+    else openTool('list');
+  };
+  const reopenTool = (request) => {
+    if (toolRequest?.intent === request.intent && toolContext?.mode === request.intent &&
+      (!request.complaint_id || toolContext.complaint_id === request.complaint_id)) setToolsOpen(true);
+    else openTool(request);
+  };
+  const setToolContext = useCallback((next) => updateToolContext((previous) =>
+    JSON.stringify(previous) === JSON.stringify(next) ? previous : next), []);
+  const notifyToolChanged = useCallback((event) => {
+    setMessages((previous) => [...previous, { id: `receipt-${Date.now()}-${++toolSequence.current}`,
+      role: 'assistant', kind: 'notice', content: event.message || '민원 도구의 처리 결과를 확인해 주세요.' }]);
+  }, []);
   const requestLock = useRef(false);
   const generation = useRef(0);
   const activeTurn = useRef(null);
@@ -23,27 +53,67 @@ export function useRecommendations(api) {
   const updateTurn = useCallback((id, next) => {
     setMessages((previous) => previous.map((message) => {
       if (message.id === id) return { ...message, job: next };
-      if (message.id === `${id}-user`) return { ...message, title: next.title || message.title, content: next.content || message.content };
+      if (message.id === `${id}-user`) return { ...message, title: next.title || message.title,
+        content: message.preserveContent ? message.content : next.content || message.content };
       return message;
     }));
   }, []);
 
-  const start = useCallback(async (body, preview = {}, retryId = null) => {
+  const start = useCallback(async (body, preview = {}, retryId = null, routing = null) => {
     if (requestLock.current) return false;
     requestLock.current = true;
     const sequence = ++generation.current;
     const id = retryId || `turn-${Date.now()}-${sequence}`;
     activeTurn.current = id;
+    const routeInput = routing && (typeof routing === 'object' ? routing : {
+      message: preview.content || body.content,
+      tool_context: toolsOpen && toolContext ? {
+        mode: ['create', 'list', 'edit', 'delete'].includes(toolContext.mode) ? toolContext.mode : 'list',
+        complaint_id: Number.isInteger(toolContext.complaint_id) ? toolContext.complaint_id : null,
+        title: (toolContext.title || '').slice(0, 200), content: (toolContext.content || '').slice(0, 4000),
+      } : null,
+      recent_messages: messages.flatMap((message) => {
+        const text = message.role === 'user' ? message.content : message.content || message.job?.result?.answer;
+        return text ? [{ role: message.role, content: text.slice(0, 600) }] : [];
+      }).slice(-6),
+    });
     setCreating(true); setError(''); setJob(null);
     if (retryId) {
-      setMessages((previous) => previous.map((message) => message.id === id ? { ...message, job: null } : message));
+      setMessages((previous) => previous.map((message) => message.id === id ? { ...message,
+        job: routing ? { status: 'routing', stage: 'routing' } : null } : message));
     } else {
       setMessages((previous) => [...previous,
-        { id: `${id}-user`, role: 'user', title: preview.title || body.title || '', content: preview.content || body.content || '', showTitle: preview.showTitle ?? !!body.complaint_id },
-        { id, role: 'assistant', job: null, request: body },
+        { id: `${id}-user`, role: 'user', title: preview.title || body.title || '', content: preview.content || body.content || '', showTitle: preview.showTitle ?? !!body.complaint_id,
+          preserveContent: !!routing || preview.preserveContent },
+        { id, role: 'assistant', job: routing ? { status: 'routing', stage: 'routing' } : null, request: body, routing: routeInput },
       ]);
     }
     try {
+      if (routeInput) {
+        const decision = await api('/api/ai-recommendations/intent', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(routeInput) });
+        if (!mounted.current || sequence !== generation.current) return false;
+        if (!['answer', 'create', 'list', 'edit', 'delete', 'close_tools'].includes(decision.intent)) {
+          throw new Error('요청한 기능을 확인하지 못했습니다. 다시 질문하거나 민원 도구 버튼을 이용해 주세요.');
+        }
+        if (decision.intent !== 'answer') {
+          if (decision.intent === 'close_tools') closeTools();
+          else if (['create', 'edit', 'delete'].includes(decision.intent) && toolContext?.mode === decision.intent &&
+            (!decision.complaint_id || decision.complaint_id === toolContext.complaint_id) &&
+            (decision.intent !== 'create' || !decision.draft)) setToolsOpen(true);
+          else openTool({ intent: decision.intent, complaint_id: decision.complaint_id, draft: decision.draft });
+          setMessages((previous) => previous.map((message) => message.id === id
+            ? { ...message, kind: 'tool', content: decision.message, toolAction: decision, job: null } : message));
+          requestLock.current = false;
+          return true;
+        }
+        const context = routeInput.tool_context;
+        if (context?.content?.trim()) {
+          body = { title: (context.title || '민원 도구에서 상담').slice(0, 200),
+            content: `민원인이 작성하거나 선택한 내용:\n${context.content}\n\n현재 질문:\n${routeInput.message}` };
+        }
+        setMessages((previous) => previous.map((message) => message.id === id ? { ...message, job: null } : message));
+      }
       const next = await api('/api/ai-recommendations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (mounted.current && sequence === generation.current) {
         setJob(next); updateTurn(id, next);
@@ -59,7 +129,7 @@ export function useRecommendations(api) {
     } finally {
       if (mounted.current && sequence === generation.current) setCreating(false);
     }
-  }, [api, updateTurn]);
+  }, [api, updateTurn, messages, toolsOpen, toolContext, toolRequest, openTool, closeTools]);
 
   useEffect(() => {
     if (!job || !['queued', 'processing'].includes(job.status)) return;
@@ -91,14 +161,15 @@ export function useRecommendations(api) {
       ? { parent_recommendation_id: parent.job.id, content }
       : { title: content.split('\n')[0].slice(0, 80), content };
     setDraft('');
-    return start(body);
+    return start(body, { content, preserveContent: true }, null, true);
   };
   const reset = () => {
     if (requestLock.current) return;
     generation.current++; activeTurn.current = null;
     setMessages([]); setDraft(''); setJob(null); setError('');
   };
-  return { messages, draft, setDraft, job, error, busy, creating, start, send, reset };
+  return { api, messages, draft, setDraft, job, error, busy, creating, start, send, reset,
+    toolsOpen, toolRequest, toolContext, openTool, closeTools, toggleTools, reopenTool, setToolContext, notifyToolChanged };
 }
 
 function MessageText({ text }) {
@@ -128,14 +199,17 @@ function AnswerOptions({ result }) {
 function AssistantMessage({ message, recommendation }) {
   const job = message.job;
   const result = job?.result;
-  const pending = !job || ['queued', 'processing'].includes(job.status);
+  const isToolMessage = ['tool', 'notice'].includes(message.kind);
+  const pending = !isToolMessage && (!job || ['routing', 'queued', 'processing'].includes(job.status));
   return <article className="ai-chat-message ai-chat-message-assistant" aria-label="AI 답변">
     <span className="ai-chat-avatar" aria-hidden="true">AI</span>
     <div className="ai-chat-message-body">
       <span className="ai-chat-sender">민원 상담 도우미</span>
       <div className={`ai-chat-bubble ${result?.answer_status === 'insufficient_evidence' ? 'ai-chat-insufficient' : ''}`}>
+        {isToolMessage && <><MessageText text={message.content} />{message.toolAction?.intent !== 'close_tools' && message.kind === 'tool' &&
+          <button className="ai-chat-retry" onClick={() => recommendation.reopenTool(message.toolAction)}>도구 다시 열기</button>}</>}
         {pending && <div className="ai-chat-thinking" role="status"><span className="ai-spinner" aria-hidden="true" /><span>{stageLabels[job?.stage] || '답변을 준비하고 있어요.'}</span></div>}
-        {job?.status === 'failed' && <><p className="ai-message-text" role="alert">{job.error_message || '답변을 생성하지 못했습니다. 다시 시도해 주세요.'}</p><button className="ai-chat-retry" disabled={recommendation.busy} onClick={() => recommendation.start(message.request, {}, message.id)}>다시 시도</button></>}
+        {job?.status === 'failed' && <><p className="ai-message-text" role="alert">{job.error_message || '답변을 생성하지 못했습니다. 다시 시도해 주세요.'}</p><button className="ai-chat-retry" disabled={recommendation.busy} onClick={() => recommendation.start(message.request, {}, message.id, message.routing)}>다시 시도</button></>}
         {result && <>
           {result.answer_status === 'insufficient_evidence' && <span className="ai-chat-evidence-note">추가 근거가 필요해요</span>}
           <MessageText text={result.answer} />
@@ -147,8 +221,9 @@ function AssistantMessage({ message, recommendation }) {
   </article>;
 }
 
-export default function AIRecommendations({ recommendation, onChooseExisting }) {
+export default function AIRecommendations({ recommendation, api = recommendation.api, onToolsChanged }) {
   const { messages, draft, setDraft, busy, send, start, reset } = recommendation;
+  const { toolsOpen = false, toolRequest, openTool, closeTools, toggleTools } = recommendation;
   const [formOpen, setFormOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -187,20 +262,21 @@ export default function AIRecommendations({ recommendation, onChooseExisting }) 
     start({ title: title.trim(), content: content.trim() }, { showTitle: true });
   };
 
-  return <section className="panel ai-chat" aria-label="AI 추천 답변" onKeyDown={(event) => {
+  return <div className={`ai-chat-workbench ${toolsOpen ? 'ai-chat-workbench-tools-open' : ''}`}><section className="panel ai-chat" aria-label="AI 추천 답변" onKeyDown={(event) => {
     if (event.key === 'Escape') { closeOptions(); setFormOpen(false); }
   }}>
     <div className="ai-chat-header">
       <div className="ai-chat-identity"><span className="ai-chat-avatar" aria-hidden="true">AI</span><div><h2>민원 상담 도우미</h2><p><span className="ai-chat-status-dot" />공식 자료를 바탕으로 안내해 드려요</p></div></div>
-      <details className="ai-chat-options" ref={optionsRef}>
+      <div className="ai-chat-header-actions"><button className={`ai-tools-toggle ${toolsOpen ? 'active' : ''}`} onClick={toggleTools} aria-expanded={toolsOpen} aria-controls="ai-citizen-tool-window">{toolsOpen ? '민원 도구 닫기' : '민원 도구 열기'}</button><details className="ai-chat-options" ref={optionsRef}>
         <summary aria-label="대화 옵션"><span aria-hidden="true">⋯</span> 옵션</summary>
         <div className="ai-chat-options-menu">
           <button disabled={busy} onClick={newConversation}>새 대화 시작</button>
-          <button disabled={busy} onClick={() => { closeOptions(); setTitle(''); setContent(draft); setFormOpen(true); }}>새로운 민원 작성하기<small>제목과 내용을 나누어 입력</small></button>
-          <button disabled={busy} onClick={() => { closeOptions(); onChooseExisting(); }}>작성된 민원에서 선택하기<small>내 민원으로 대화 시작</small></button>
-          <details className="ai-chat-usage"><summary>이용 안내</summary><p>여기에서 나눈 대화는 실제 민원으로 접수되지 않습니다. 민원 접수는 ‘새 민원’에서 진행해 주세요.</p><p>다른 메뉴로 이동해도 대화는 유지됩니다. 새로고침하거나 로그아웃하면 화면의 대화는 초기화됩니다.</p></details>
+          <button onClick={() => { closeOptions(); openTool('create'); }}>새로운 민원 작성하기<small>오른쪽 도구에서 작성하고 접수</small></button>
+          <button onClick={() => { closeOptions(); openTool('list'); }}>작성된 민원에서 선택하기<small>오른쪽 도구에서 확인·수정·삭제</small></button>
+          <button disabled={busy} onClick={() => { closeOptions(); setTitle(''); setContent(draft); setFormOpen(true); }}>제목·내용으로 AI 답변 받기<small>민원을 접수하지 않고 예상 답변 확인</small></button>
+          <details className="ai-chat-usage"><summary>이용 안내</summary><p>대화로 민원 작성이나 확인을 요청하면 오른쪽 도구를 열어 드립니다. 실제 접수·수정·삭제는 도구 창에서 버튼으로 확정합니다.</p><p>다른 메뉴로 이동해도 대화는 유지됩니다. 새로고침하거나 로그아웃하면 화면의 대화는 초기화됩니다.</p></details>
         </div>
-      </details>
+      </details></div>
     </div>
 
     <div className="ai-chat-history" ref={scrollRef} role="log" aria-label="민원 상담 대화" aria-live="polite" aria-relevant="additions text" onScroll={(event) => {
@@ -210,7 +286,7 @@ export default function AIRecommendations({ recommendation, onChooseExisting }) 
       <div className="ai-chat-date">오늘</div>
       <article className="ai-chat-message ai-chat-message-assistant">
         <span className="ai-chat-avatar" aria-hidden="true">AI</span>
-        <div className="ai-chat-message-body"><span className="ai-chat-sender">민원 상담 도우미</span><div className="ai-chat-bubble"><p className="ai-message-text">안녕하세요! 어떤 민원이 궁금하신가요?{ '\n' }상황과 궁금한 점을 적어 주시면 공식 자료를 찾아 안내해 드릴게요.</p></div></div>
+        <div className="ai-chat-message-body"><span className="ai-chat-sender">민원 상담 도우미</span><div className="ai-chat-bubble"><p className="ai-message-text">안녕하세요! 어떤 도움이 필요하신가요?{ '\n' }궁금한 점을 물어보거나 “민원을 작성하고 싶어”, “내 민원을 확인하고 싶어”라고 말씀해 주세요.</p></div></div>
       </article>
       {messages.map((message) => message.role === 'user'
         ? <article key={message.id} className="ai-chat-message ai-chat-message-user" aria-label="내 메시지"><div className="ai-chat-message-body"><span className="ai-chat-sender">나</span><div className="ai-chat-bubble">{message.showTitle && message.title && <strong className="ai-chat-topic">{message.title}</strong>}<p className="ai-message-text">{message.content || '선택한 민원을 불러오고 있어요.'}</p></div></div></article>
@@ -234,5 +310,11 @@ export default function AIRecommendations({ recommendation, onChooseExisting }) 
       </form>}
       <p className="ai-chat-disclaimer">AI 안내는 참고용이며 담당 기관의 공식 답변과 다를 수 있습니다.</p>
     </div>
-  </section>;
+  </section>{toolRequest && <div id="ai-citizen-tool-window" className="ai-chat-tool-slot" hidden={!toolsOpen}>
+    <CitizenComplaintTools api={api} request={toolRequest} visible={toolsOpen} onContextChange={recommendation.setToolContext}
+      onClose={closeTools} recommendationBusy={busy} onChanged={(event) => { recommendation.notifyToolChanged(event); onToolsChanged?.(event); }}
+      onRecommend={(record) => record.id
+        ? start({ complaint_id: record.id }, { title: record.title, content: record.content, showTitle: true })
+        : start({ title: record.title || '작성 중인 민원', content: record.content }, { showTitle: true })} />
+  </div>}</div>;
 }

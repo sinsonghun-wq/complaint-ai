@@ -799,19 +799,46 @@ def delete_category(category: str, body: CancelBody, actor: Annotated[dict, Depe
 
 
 @app.post("/api/complaints/{complaint_id}/restore")
-def restore(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)]):
+def restore(complaint_id: int, background_tasks: BackgroundTasks, actor: Annotated[dict, Depends(actor_from_auth)]):
+    require_department(actor)
     clause, args = scoped_where(actor)
     with connection() as conn:
-        with conn.cursor() as cur: cur.execute(f"UPDATE complaints SET deleted_at=NULL WHERE id=%s AND deleted_at IS NOT NULL AND cancelled_at IS NULL{clause} RETURNING id", (complaint_id, *args)); row = cur.fetchone()
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT * FROM complaints WHERE id=%s AND deleted_at IS NOT NULL{clause} FOR UPDATE", (complaint_id, *args))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "담당 부서의 삭제 보관함에서 민원을 찾을 수 없습니다.")
+            if row.get('content_fingerprint'):
+                conn.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))', (str(row['owner_user_id']) + row['content_fingerprint'],))
+                cur.execute("""SELECT id FROM complaints WHERE id<>%s AND owner_user_id IS NOT DISTINCT FROM %s
+                    AND content_fingerprint=%s AND deleted_at IS NULL AND complaint_status<>'취소' LIMIT 1""",
+                    (complaint_id, row['owner_user_id'], row['content_fingerprint']))
+                if cur.fetchone():
+                    raise HTTPException(409, "동일한 민원이 이미 보관함에 있어 복원할 수 없습니다.")
+            cur.execute("SELECT 1 FROM complaint_responses WHERE complaint_id=%s AND response_state='sent' LIMIT 1", (complaint_id,))
+            status = '완료' if cur.fetchone() or row['complaint_status'] == '완료' else '접수'
+            needs_analysis = status == '접수' and (not row['category'] or not row['summary'])
+            cur.execute("DELETE FROM complaint_responses WHERE complaint_id=%s AND response_state='draft'", (complaint_id,))
+            cur.execute("""UPDATE complaints SET deleted_at=NULL,complaint_status=%s,cancelled_at=NULL,
+                cancelled_by_role=NULL,cancellation_reason=NULL,status_updated_at=NOW(),
+                analysis_state=%s,analysis_revision=analysis_revision+1 WHERE id=%s
+                RETURNING id,complaint_status,analysis_state,analysis_revision""",
+                (status, 'pending' if needs_analysis else 'completed', complaint_id))
+            result = cur.fetchone()
         conn.commit()
-    return {"restored": int(bool(row))}
+    if needs_analysis:
+        background_tasks.add_task(classify_submission, result['id'], result['analysis_revision'])
+    return {"restored": 1, "complaint": result}
 
 
 @app.delete("/api/complaints/{complaint_id}/permanent")
 def permanent(complaint_id: int, body: PasswordBody, actor: Annotated[dict, Depends(actor_from_auth)]):
+    require_department(actor)
     check_password(actor, body.password); clause, args = scoped_where(actor)
     with connection() as conn:
-        with conn.cursor() as cur: cur.execute(f"DELETE FROM complaints WHERE id=%s AND deleted_at IS NOT NULL AND complaint_status NOT IN ('완료','취소'){clause} RETURNING id", (complaint_id, *args)); row = cur.fetchone()
+        with conn.cursor() as cur: cur.execute(f"DELETE FROM complaints WHERE id=%s AND deleted_at IS NOT NULL{clause} RETURNING id", (complaint_id, *args)); row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "담당 부서의 삭제 보관함에서 민원을 찾을 수 없습니다.")
         conn.commit()
     return {"permanently_deleted": int(bool(row))}
 
@@ -1253,8 +1280,11 @@ def delete_draft_response(complaint_id: int, actor: Annotated[dict, Depends(acto
 
 
 @app.post("/api/department/complaints/{complaint_id}/responses/send")
-def send_draft_response(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)]):
+def send_draft_response(complaint_id: int, actor: Annotated[dict, Depends(actor_from_auth)], body: ResponseBody | None = None):
     department_complaint(complaint_id, actor)
+    content = body.content.strip() if body else None
+    if body and not 2 <= len(content) <= 5000:
+        raise HTTPException(400, "응답은 2~5,000자로 작성해 주세요.")
     with connection() as conn:
         with conn.cursor() as cur:
             row = locked_complaint(cur, complaint_id, actor)
@@ -1262,9 +1292,12 @@ def send_draft_response(complaint_id: int, actor: Annotated[dict, Depends(actor_
             cur.execute("SELECT 1 FROM complaint_responses WHERE complaint_id=%s AND response_state='sent'", (complaint_id,))
             if cur.fetchone():
                 raise HTTPException(409, "이미 답변이 완료된 민원입니다.")
-            cur.execute("""UPDATE complaint_responses SET response_state='sent',sent_at=NOW()
+            # Commit the text currently displayed in the editor and the sent
+            # state together under the complaint lock. Legacy clients may omit
+            # the body to send their existing stored draft unchanged.
+            cur.execute("""UPDATE complaint_responses SET content=COALESCE(%s::text,content),response_state='sent',sent_at=NOW()
                 WHERE id=(SELECT id FROM complaint_responses WHERE complaint_id=%s AND author_user_id=%s AND response_state='draft' ORDER BY created_at DESC LIMIT 1)
-                RETURNING id,content,response_state,sent_at""", (complaint_id, actor["sub"]))
+                RETURNING id,content,response_state,sent_at""", (content, complaint_id, actor["sub"]))
             response = cur.fetchone()
             if not response:
                 raise HTTPException(400, "전송할 임시 저장 답변이 없습니다.")

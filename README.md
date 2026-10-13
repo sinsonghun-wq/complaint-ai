@@ -17,6 +17,17 @@
 `python scripts/merge_to_seven_departments.py --apply`로 이전한다. 부서 통합에 `init.sql`을 실행하지 않는다.
 계정과 상세 절차는 [React + FastAPI README](complaintai-react-fastapi/README.md)에 있다.
 
+## 일반 사용자 테스트 계정
+
+로그인 화면의 ID에는 아래 `user-a` 또는 `user-b`를 입력한다. 두 계정은 일반 민원인 역할이며 각자의 민원 데이터를 따로 관리한다.
+
+| 계정 이름 | 로그인 ID | 비밀번호 |
+| --- | --- | --- |
+| 테스트 일반 사용자 A | `user-a` | `UserA!2026` |
+| 테스트 일반 사용자 B | `user-b` | `UserB!2026` |
+
+2026-10-12 현재 로컬 DB의 계정 존재·일반 사용자 역할·비밀번호 해시 일치를 확인했다. 당시 웹 서버에 연결되지 않아 HTTP 로그인 검증은 수행하지 못했다. 위 비밀번호는 로컬 개발·검증 전용이며 운영 환경에서는 반드시 변경하고 공개 문서에서 제거한다.
+
 ## 데이터베이스 초기화 주의사항
 
 - `database/init.sql`은 Docker가 **새로운** `postgres_data` 볼륨을 만들 때 한 번 실행된다.
