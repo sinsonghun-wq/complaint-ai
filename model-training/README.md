@@ -11,7 +11,7 @@ complaint-ai 의 LLM(`dcm-back`)을 Gemma 4 E4B(`google/gemma-4-E4B-it` = Ollama
 | 학습 대상 | 앱의 위치 | 데이터 |
 |---|---|---|
 | 챗봇 모드 0 - 도구 선택·인자·안내 문구 | `dcm-back/app/agent.py` | `data/chat_records.jsonl` (6,077건 - backend 5,058 + A3 150 + 균형 보강 869) |
-| 민원 분석 - 카테고리·요약·핵심어 JSON | `dcm-back/app/ai.py` 의 `analyze()` | `data/analysis_records.jsonl` (210건) |
+| 민원 분석 - 카테고리·요약·핵심어 JSON | `dcm-back/app/ai.py` 의 `analyze()` | `data/analysis_records.jsonl` (407건) |
 
 챗봇 모드 1(문의)은 학습하지 않습니다. 정답 기준은 `data/label_guide.md` 에 있습니다.
 
@@ -45,6 +45,9 @@ complaint-ai 의 LLM(`dcm-back`)을 Gemma 4 E4B(`google/gemma-4-E4B-it` = Ollama
 | `export_prompts.py` | 앱이 보내는 도구 목록 JSON·메시지 모양(Ollama 용, OpenAI 호환 용)을 `data/tools_mode0.json` 으로 저장 |
 | `requirements-train.txt` | Colab 설치 목록 |
 | `data/` | `label_guide.md`(라벨 규칙), `chat_records.jsonl`, `analysis_records.jsonl`, `tools_mode0.json` |
+
+**과제별 val loss** - 검증 때마다 전체(`eval_all_loss`)와 과제별(`eval_chat_call_loss`, `eval_chat_reply_loss`, `eval_analysis_loss`) loss 를 따로 기록합니다.
+best 체크포인트·early stopping 은 전체 기준이고, 노트북 8번 그래프 오른쪽 칸과 학습 뒤 표에서 분석 loss 만 따로 볼 수 있습니다. (`trainer.build_trainer(per_task_eval=False)` 면 예전처럼 전체만)
 
 결과물 (`.gitignore` 대상): `outputs/`(체크포인트·어댑터·평가 결과), `modelfiles/`(GGUF·Modelfile, `modelfiles/llama-server/` 에 베이스·어댑터 GGUF)
 
@@ -152,7 +155,7 @@ python model-training\evaluate.py --llama-server http://127.0.0.1:8080 --lora-sc
 | 데이터 | 건수 | 기준 |
 |---|---|---|
 | `chat_records.jsonl` | 6,077건 (backend 5,058 + 접수 의사만 있는 발화 A3 150 + 종류 균형 보강 869) | label_guide 과제 1 |
-| `analysis_records.jsonl` | 210건 (카테고리별 30, 긴 원문·여러 민원·모호한 제목 등 포함) | label_guide C1~C8, "분석 데이터 구성" |
+| `analysis_records.jsonl` | 407건 (기타 65 · 나머지 분야 57씩, 긴 원문·여러 민원·모호한 제목·칭찬 등 포함). 분할 train 280 / val 57 / test 70 (카테고리마다 평가셋 9~12건) | label_guide C1~C8, "분석 데이터 구성" |
 
 챗봇 정답 종류별 건수: 접수 2,025 / 조회(대상 있음) 1,620 / 조회(대상 없음) 640 / 문의 안내 609 / 접수(내용 없음) 600 / 거절 583
 
@@ -165,6 +168,7 @@ python model-training\evaluate.py --llama-server http://127.0.0.1:8080 --lora-sc
   `0` 이면 학습 분할 전체 건수(약 4,100건)를 같은 비율로 나눕니다. 많은 종류(접수·조회)는 일부만 쓰고 적은 종류는 반복합니다.
 - 같은 건수면 항상 같은 레코드가 골라지고, 건수를 늘리면 앞서 고른 레코드는 그대로 두고 뒤에 더 붙습니다.
 - 어떤 종류가 몫보다 적으면 `MAX_REPEAT`(기본 3)번까지 반복해 채우고, 그래도 모자란 자리만 다른 종류가 나눠 채웁니다.
-- 분석은 `학습 분석 레코드 수 x ANALYSIS_REPEAT(3)` 개를 카테고리별 같은 수로 고릅니다. (분석 데이터가 챗봇보다 훨씬 적어 비중을 맞춤)
+- 분석은 `학습 분석 레코드 수 x ANALYSIS_REPEAT(2)` 개를 카테고리별 같은 수로 고릅니다. (분석 데이터가 챗봇보다 훨씬 적어 비중을 맞춤.
+  TRAIN_LIMIT=1000 이면 분석 비중 약 30%, 3 이면 약 39%)
 - 비율을 고를 때 이미 맞추므로 `samples.build_samples()` 의 `analysis_repeat`, `no_tool_repeat` 은 1 로 둡니다. (예전의 `NO_TOOL_REPEAT` 설정은 없앴습니다)
 데이터를 고친 뒤에는 `python model-training/records.py` 로 검사하세요.
