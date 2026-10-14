@@ -19,6 +19,8 @@ jsonpointer==3.1.1
 langchain==1.4.3
 langchain-core==1.6.5
 langchain-ollama==1.1.0
+# LLM_BACKEND=llama_server 일 때 챗봇이 llama-server(OpenAI 호환 API)에 붙을 때 씀
+langchain-openai>=1.0,<2
 langchain-protocol==0.0.19
 langgraph==1.2.12
 langgraph-checkpoint==4.2.0

@@ -31,3 +31,11 @@ __pycache__
 unsloth_compiled_cache
 outputs
 modelfiles
+
+# 모델 파일 - 어디에 두든 커밋하지 않음 (model-training/modelfiles/ 는 위의 modelfiles 로 이미 제외)
+*.gguf
+*.safetensors
+# llama.cpp 를 저장소 안에 받았을 때
+llama.cpp/
+# HWP 파서 전용 가상환경 (scripts/setup_hwp_parser.ps1 이 만듦)
+.hwp-parser

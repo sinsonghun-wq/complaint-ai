@@ -12,7 +12,8 @@ import httpx
 
 from . import categories as category_defs
 from . import prompts
-from .settings import ACTIVE_EMBEDDING_MODEL, EMBEDDING_API_URL, EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT_MS, LLM_MODEL, LLM_NUM_CTX, LLM_TIMEOUT_MS, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
+from . import llm
+from .settings import ACTIVE_EMBEDDING_MODEL, EMBEDDING_API_URL, EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT_MS, LLM_MODEL, LLM_NUM_CTX, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
 
 # 카테고리 이름·설명·키워드는 categories.py 한 곳에서 관리합니다.
 CATEGORIES = list(category_defs.NAMES)
@@ -21,6 +22,8 @@ KEYWORDS = {c.name: list(c.keywords) for c in category_defs.CATEGORIES}
 PROMPT_VERSION = prompts.PROMPT_VERSION
 # 분석 JSON 의 최대 생성 토큰 (요약 2~3문장 + key_points + keywords 가 잘리지 않도록)
 ANALYSIS_MAX_TOKENS = 512
+
+
 _embedding_unavailable_until = 0.0
 
 
@@ -53,19 +56,22 @@ async def analyze(title: str, content: str) -> dict[str, Any]:
     safe = fallback(title, content)
     if not clean(content):
         return safe
+    result = None
     try:
-        async with httpx.AsyncClient(timeout=LLM_TIMEOUT_MS / 1000) as client:
-            response = await client.post(f"{OLLAMA_URL}/api/chat", json={"model": LLM_MODEL, "stream": False, "format": "json", "options": {"temperature": 0, "top_p": 0.1, "num_ctx": LLM_NUM_CTX, "num_predict": ANALYSIS_MAX_TOKENS}, "messages": [{"role": "user", "content": prompt(title, content)}]})
-            logger.info(response.json())
-            response.raise_for_status()
-            raw = json.loads(response.json()["message"]["content"].replace("```json", "").replace("```", "").strip())
+        # 어느 백엔드(Ollama / llama-server+어댑터)로 보낼지는 llm.py 가 .env 의 LLM_BACKEND 로 정합니다.
+        result = await llm.chat_json(llm.TASK_ANALYSIS, [{"role": "user", "content": prompt(title, content)}],
+                                     schema=prompts.ANALYSIS_JSON_SCHEMA, temperature=0, top_p=0.1, max_tokens=ANALYSIS_MAX_TOKENS)
+        llm.log_usage("민원 분석", result, ANALYSIS_MAX_TOKENS)
+        raw = json.loads(result.content.replace("```json", "").replace("```", "").strip())
         if raw.get("category") not in CATEGORIES or not clean(raw.get("summary")):
             raise ValueError("LLM JSON validation failed")
         # 정해진 필드(prompts.ANALYSIS_FIELDS)만 받습니다. confidence·reason 은 LLM 이 만들지 않으므로 비웁니다.
         fields = {key: raw[key] for key in prompts.ANALYSIS_FIELDS if key in raw}
-        return {**safe, **fields, "title": clean(raw.get("title")) or safe["title"], "content": redact(content), "summary": clean(raw["summary"])[:900], "category": raw["category"], "urgency": raw.get("urgency") if raw.get("urgency") in prompts.URGENCY_VALUES else "medium", "confidence": None, "reason": None, "processing_mode": "llm", "model": LLM_MODEL}
+        return {**safe, **fields, "title": clean(raw.get("title")) or safe["title"], "content": redact(content), "summary": clean(raw["summary"])[:900], "category": raw["category"], "urgency": raw.get("urgency") if raw.get("urgency") in prompts.URGENCY_VALUES else "medium", "confidence": None, "reason": None, "processing_mode": "llm", "model": result.model}
     except Exception as error:
         logger.exception(error)
+        if result is not None:   # 응답은 받았는데 처리에 실패한 경우에만 모델 출력을 남깁니다.
+            logger.warning(f"[민원 분석] 실패한 모델 출력: {str(result.content)[:2000]}")
         return fallback(title, content, f"LLM을 사용할 수 없어 규칙 기반 처리로 저장했습니다. ({error})")
 
 
@@ -83,13 +89,10 @@ async def infer_csv_mapping(headers: list[str], samples: list[dict[str, Any]]) -
 반드시 아래 JSON만 반환한다. 모든 열 이름은 제공된 headers 중 정확히 하나여야 한다.
 {"title_column":"", "content_columns":[""], "response_column":"", "category_column":"", "confidence":0.0, "reason":""}"""
     try:
-        async with httpx.AsyncClient(timeout=LLM_TIMEOUT_MS / 1000) as client:
-            response = await client.post(
-                f"{OLLAMA_URL}/api/chat",
-                json={"model": LLM_MODEL, "stream": False, "format": "json", "options": {"temperature": 0}, "messages": [{"role": "user", "content": f"{instruction}\n\nheaders:\n{json.dumps(safe_headers, ensure_ascii=False)}\n\nsamples:\n{json.dumps(safe_samples, ensure_ascii=False)}"}]},
-            )
-            response.raise_for_status()
-            result = json.loads(response.json()["message"]["content"].replace("```json", "").replace("```", "").strip())
+        # CSV 열 매핑은 학습하지 않은 작업이라 기본 설정에서는 어댑터 없이(베이스 모델) 답합니다. (llm.uses_adapter)
+        answer = await llm.chat_json(llm.TASK_CSV_MAPPING, [{"role": "user", "content": f"{instruction}\n\nheaders:\n{json.dumps(safe_headers, ensure_ascii=False)}\n\nsamples:\n{json.dumps(safe_samples, ensure_ascii=False)}"}], temperature=0)
+        llm.log_usage("CSV 열 매핑", answer)
+        result = json.loads(answer.content.replace("```json", "").replace("```", "").strip())
         return {"title_column": clean(result.get("title_column")), "content_columns": [clean(value) for value in result.get("content_columns", []) if clean(value)], "response_column": clean(result.get("response_column")), "category_column": clean(result.get("category_column")), "confidence": float(result.get("confidence", 0)), "reason": clean(result.get("reason")), "source": "llm"}
     except Exception as error:
         return {"title_column": "", "content_columns": [], "response_column": "", "category_column": "", "confidence": 0.0, "reason": f"헤더 매핑 LLM을 사용할 수 없습니다. ({error})", "source": "unavailable"}

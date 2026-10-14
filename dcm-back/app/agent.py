@@ -4,7 +4,6 @@ import json
 from fastapi import FastAPI
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
-from langchain_ollama import ChatOllama
 from langchain.agents import create_agent
 from contextlib import asynccontextmanager
 
@@ -12,7 +11,8 @@ from app.models import ChatRequestBody, ChatResponseBody
 
 from . import prompts
 from .logger import logger
-from .ai import LLM_MODEL, embeddingForSelect
+from . import llm as llm_backend
+from .ai import embeddingForSelect
 from .db import fetch_all
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -27,12 +27,13 @@ async def aiFAQ() -> dict:
 def insertRequestT(title: str, content: str) -> dict:
     return {"code": 1, "result": [{"title": title, "content": content}]}
 
-async def selectComplaintT(content: str, is_described: bool, config: RunnableConfig) -> dict:
+async def selectComplaintT(content: str, config: RunnableConfig) -> dict:
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id")
     
     rows = []
-    vector = await embeddingForSelect(content) if is_described and user_id else None
+    # content 가 비어 있으면(찾을 대상을 말하지 않음) 검색하지 않고 빈 결과를 돌려줍니다.
+    vector = await embeddingForSelect(content) if content.strip() and user_id else None
     if vector:
         rows = fetch_all(
             f"""
@@ -185,7 +186,10 @@ async def lifespan(app: FastAPI):
         "selectComplaintT": selectComplaintT,
     }
     
-    llm = ChatOllama(model=LLM_MODEL, temperature=0.1)
+    # 챗봇 모델 - .env 의 LLM_BACKEND 에 따라 ChatOllama 또는 ChatOpenAI(llama-server + 어댑터)
+    # (Ollama 일 때 num_ctx 를 민원 분석과 같게 맞추는 것도 llm.make_chat_model 안에서 합니다)
+    await llm_backend.check_backend()
+    llm = llm_backend.make_chat_model(llm_backend.TASK_CHAT, temperature=0.1)
 
     # 백그라운드 워커에 llm과 tools_dict 전달
     worker_task = asyncio.create_task(llm_worker(llm, tools_dict))

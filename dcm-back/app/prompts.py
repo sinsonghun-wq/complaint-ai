@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from . import categories as category_defs
 
-PROMPT_VERSION = "complaintai-ko-v3"   # v3: 프롬프트 분리, 분석 JSON 에서 confidence·reason 제거, 챗봇 안내 문구 고정
+PROMPT_VERSION = "complaintai-ko-v6"   # v3: 프롬프트 분리·confidence/reason 제거·안내 문구 고정 / v4: 짧은 원문의 summary·keywords 개수 규칙 / v5: keywords 는 제목이 아닌 원문에서(띄어쓰기 그대로) / v6: selectComplaintT 의 is_described 인자 제거(content 가 비었는지로 판단)
 
 
 # =============================================================================
@@ -52,7 +52,7 @@ AGENT_SYSTEM_PROMPTS: dict[int, str] = {
 - insertRequestT, 내용이 없음: "{REPLY_TEXTS['insert_empty']}"
 - selectComplaintT, 찾은 민원이 있음: "{REPLY_TEXTS['select_found']}"
 - selectComplaintT, 찾은 민원이 없음: "{REPLY_TEXTS['select_none']}"
-- selectComplaintT, is_described 가 false: "{REPLY_TEXTS['select_undescribed']}"
+- selectComplaintT, content 가 빈 문자열: "{REPLY_TEXTS['select_undescribed']}"
 
 {_RULES}""",
     AGENT_MODE_INQUIRY: f"""너는 한국인 민원인들의 민원 처리를 돕는 한국어를 사용하는 AI 도우미야.
@@ -70,8 +70,7 @@ title: 무엇이 어떤 상태인지 나타내는 짧은 명사형 제목입니�
 content: 민원인이 한 말을 고치지 말고 그대로 넣습니다.
 민원 접수를 원한다는 말만 있고 내용이 없으면 title 과 content 를 모두 빈 문자열("")로 둡니다.""",
     "selectComplaintT": """민원인이 이미 접수한 민원을 내용의 유사도로 찾아 화면 왼쪽에 목록으로 보여 줍니다. 민원의 조회·수정·삭제를 요청하거나 진행 상황을 물을 때 호출합니다. 민원 ID·번호로는 찾을 수 없습니다.
-content: 찾을 민원의 대상을 나타내는 명사만 민원인이 한 말 그대로 넣습니다. 번호·동·호·층, 장소를 꾸미는 말, 상태·요청을 나타내는 말(고장, 파손, 취소 등)은 뺍니다. (예: "101동 엘리베이터 고장 민원 취소해 줘" -> "엘리베이터") 대상을 알 수 없으면 빈 문자열("")입니다.
-is_described: content 가 비어 있지 않으면 true, 비어 있으면 false 입니다.""",
+content: 찾을 민원의 대상을 나타내는 명사만 민원인이 한 말 그대로 넣습니다. 번호·동·호·층, 장소를 꾸미는 말, 상태·요청을 나타내는 말(고장, 파손, 취소 등)은 뺍니다. (예: "101동 엘리베이터 고장 민원 취소해 줘" -> "엘리베이터") 대상을 알 수 없으면 빈 문자열("")입니다.""",
     "aiFAQ": """민원의 처리를 요청하는 경우가 아닌, 민원과 관련된 문의를 하는 경우라면 LLM 모델이 직접 답변합니다.
 민원과 관련되지 않은 질문 및 요청이 들어올 경우 민원인에게 민원과 관련된 답변만 제공함을 안내해드립니다.
 
@@ -105,14 +104,46 @@ ANALYSIS_FIELDS: tuple[str, ...] = (
 )
 URGENCY_VALUES: tuple[str, ...] = ("low", "medium", "high")
 
+# Ollama 구조화 출력용 JSON 스키마 (요청의 format 에 넣음).
+# 모델이 이 스키마를 벗어난 글자를 생성할 수 없게 막습니다 - category 는 7종 중 하나, 8개 필드 모두 필수.
+# 속성 순서가 곧 생성 순서이므로 ANALYSIS_FIELDS 와 같은 순서로 둡니다.
+ANALYSIS_JSON_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "key_points": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 3},
+        "urgency": {"type": "string", "enum": list(URGENCY_VALUES)},
+        "needs_review": {"type": "boolean"},
+        "review_reason": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "category": {"type": "string", "enum": list(category_defs.NAMES)},
+        "keywords": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 5},
+    },
+    "required": list(ANALYSIS_FIELDS),
+    "additionalProperties": False,
+}
+
+# 분석 프롬프트에 넣는 민원 원문 최대 글자 수. 넘으면 앞부분만 넣고 생략 표시를 붙입니다.
+# (긴 문서에서 컨텍스트를 넘겨 지시문이 잘리는 것을 막기 위함. 학습 데이터도 같은 규칙으로 자릅니다)
+ANALYSIS_CONTENT_MAX_CHARS = 1500
+ANALYSIS_TRUNCATED_MARK = "\n…(이하 생략)"
+
 _ANALYSIS_SCHEMA = (
     '{"title":"짧은 제목","summary":"2~3문장 요약","key_points":["핵심 쟁점"],"urgency":"low|medium|high",'
     '"needs_review":false,"review_reason":null,"category":"허용 category","keywords":["핵심어"]}'
 )
 
 
+def analysis_content(content: str) -> str:
+    """분석 프롬프트에 넣을 원문. ANALYSIS_CONTENT_MAX_CHARS 를 넘으면 앞부분만 남기고 생략 표시를 붙입니다."""
+    if len(content) <= ANALYSIS_CONTENT_MAX_CHARS:
+        return content
+    return content[:ANALYSIS_CONTENT_MAX_CHARS] + ANALYSIS_TRUNCATED_MARK
+
+
 def analysis_prompt(title: str, content: str) -> str:
-    """민원 분석 프롬프트. title·content 는 호출하는 쪽에서 공백 정리·개인정보 가림을 마친 값이어야 합니다."""
+    """민원 분석 프롬프트. title·content 는 호출하는 쪽에서 공백 정리·개인정보 가림을 마친 값이어야 합니다.
+    원문이 길면 analysis_content() 규칙으로 잘라서 넣습니다."""
     names = ", ".join(category_defs.NAMES)
     return (
         "당신은 대한민국 민원 데이터를 정확하고 중립적으로 처리하는 AI다. "
@@ -121,11 +152,11 @@ def analysis_prompt(title: str, content: str) -> str:
         f"{category_defs.prompt_block()}\n\n"
         "[작성 규칙]\n"
         "- title: 원문 표현을 쓴 짧은 명사형 제목, 20자 이내\n"
-        "- summary: 2~3문장. 원문에 없는 날짜·기관·장소·해결책은 넣지 않는다\n"
+        "- summary: 2~3문장(원문이 한두 문장이면 1문장). 원문에 없는 날짜·기관·장소·해결책은 넣지 않는다\n"
         "- key_points: 1~3개. 민원 대상, 문제 상태, 요청 사항 위주\n"
         "- urgency: high(인명·안전 위험 - 화재, 붕괴, 사고 우려 등) / medium(생활 불편) / low(단순 문의·제안·칭찬)\n"
         "- needs_review: 내용이 너무 짧거나, 대상·위치를 알 수 없거나, 여러 민원이 섞여 있으면 true 와 review_reason(이유 한 문장). 아니면 false 와 null\n"
-        "- keywords: 원문에 글자 그대로 있는 명사 3~5개\n\n"
+        "- keywords: 민원 제목이 아니라 민원 원문에 글자 그대로(띄어쓰기까지 같게) 있는 명사 3~5개(원문이 짧으면 있는 만큼)\n\n"
         f"JSON만 반환한다. {_ANALYSIS_SCHEMA}\n\n"
-        f"민원 제목:\n{title}\n\n민원 원문:\n{content}"
+        f"민원 제목:\n{title}\n\n민원 원문:\n{analysis_content(content)}"
     )
