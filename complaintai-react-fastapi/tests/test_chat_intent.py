@@ -72,6 +72,15 @@ class ChatIntentValidationTests(unittest.TestCase):
         self.assertIsNone(result.complaint_id)
         self.assertIsNone(result.draft)
 
+    def test_filter_and_search_only_open_or_arm_tools_and_drop_targets(self):
+        body = ChatIntentBody(message='민원을 검색하고 싶어')
+        for action in ('filter', 'search'):
+            result = validate_model_intent(model_output(action, 999, {'title': '임의', 'content': '초안'}), body)
+            self.assertEqual(result.intent, action)
+            self.assertIsNone(result.complaint_id)
+            self.assertIsNone(result.draft)
+        self.assertIn('다음 메시지', result.message)
+
     def test_each_tool_response_describes_user_review_rather_than_completed_action(self):
         body = ChatIntentBody(message='내 민원을 확인하고 싶어')
         for action in ('create', 'list', 'edit', 'delete', 'close_tools'):

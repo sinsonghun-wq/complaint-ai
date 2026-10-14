@@ -277,6 +277,10 @@ header input {
   padding: 24px;
   box-shadow: 0 5px 18px #1634590b;
 }
+.citizen-list-filter { margin-bottom: 18px; }
+.citizen-list-filter > details > summary { cursor: pointer; color: #405b85; font-size: 14px; font-weight: 700; }
+.citizen-list-filter .complaint-filters { margin-top: 16px; }
+.citizen-list-filter > p { margin: 12px 0 0; color: #64758f; font-size: 12px; line-height: 1.7; }
 .category {
   margin-bottom: 20px;
 }

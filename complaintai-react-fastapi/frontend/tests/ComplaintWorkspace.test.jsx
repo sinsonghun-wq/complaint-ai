@@ -31,6 +31,31 @@ function server(rows = [baseRecord], counts = () => jsonResponse({ categories: [
 }
 
 describe('민원 작업 화면 회귀 테스트', () => {
+  it('applies and clears department/status lookup on the regular citizen complaint screen', async () => {
+    login('user'); const calls = server([{ ...baseRecord, latest_response: null, latest_response_state: null }]); render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '작성한 민원', exact: true }));
+    await screen.findByText(baseRecord.title);
+    fireEvent.click(screen.getByText('특정 민원 조회'));
+    const filters = screen.getByRole('region', { name: '민원 조회 조건' });
+    expect(within(filters).getByRole('button', { name: '조회하기' }).disabled).toBe(true);
+    fireEvent.click(within(filters).getByRole('checkbox', { name: '교통·국토' }));
+    fireEvent.click(within(filters).getByRole('checkbox', { name: '환경·위생' }));
+    fireEvent.click(within(filters).getByRole('radio', { name: '접수 중' }));
+    fireEvent.click(within(filters).getByRole('button', { name: '조회하기' }));
+    await waitFor(() => {
+      const filtered = calls.filter((call) => call.path === '/api/complaints').at(-1);
+      const params = new URLSearchParams(filtered.search);
+      expect(params.getAll('departments')).toEqual(['교통·국토', '환경·위생']);
+      expect(params.get('view_status')).toBe('in_progress');
+      expect(params.get('offset')).toBe('0');
+    });
+    fireEvent.click(within(filters).getByRole('button', { name: '조건 초기화' }));
+    await waitFor(() => {
+      const params = new URLSearchParams(calls.filter((call) => call.path === '/api/complaints').at(-1).search);
+      expect(params.has('departments')).toBe(false); expect(params.has('view_status')).toBe(false);
+    });
+  });
+
   it('sends the current edited answer and shows the server-confirmed text', async () => {
     login(); const calls = server(); render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '분류 목록', exact: true }));

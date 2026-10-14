@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import CitizenComplaintTools from './CitizenComplaintTools.jsx';
+import ComplaintFilters from './ComplaintFilters.jsx';
 
 const stageLabels = {
   routing: '요청하신 답변이나 기능을 확인하고 있어요.',
@@ -19,10 +20,13 @@ export function useRecommendations(api) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [toolRequest, setToolRequest] = useState(null);
   const [toolContext, updateToolContext] = useState(null);
+  const [lookupPrompt, setLookupPrompt] = useState(null);
+  const lookupRef = useRef(null);
   const toolSequence = useRef(0);
   const openTool = useCallback((request = 'list') => {
     const next = typeof request === 'string' ? { intent: request } : request;
-    if (!['create', 'list', 'edit', 'delete'].includes(next.intent)) return;
+    if (!['create', 'list', 'edit', 'delete', 'filter', 'search'].includes(next.intent)) return;
+    lookupRef.current = null; setLookupPrompt(null);
     updateToolContext(null);
     setToolRequest({ ...next, key: ++toolSequence.current });
     setToolsOpen(true);
@@ -59,8 +63,64 @@ export function useRecommendations(api) {
     }));
   }, []);
 
+  const promptLookup = useCallback((intent, existingId = null) => {
+    if (requestLock.current && !existingId) return;
+    const id = existingId || `lookup-${Date.now()}-${++toolSequence.current}`;
+    const prompt = { id, kind: intent };
+    lookupRef.current = prompt; setLookupPrompt(prompt);
+    const message = { id, role: 'assistant', kind: intent === 'filter' ? 'filter_prompt' : 'search_prompt',
+      content: intent === 'filter' ? '어떤 민원들을 조회하시겠습니까?'
+        : '어떤 민원을 검색하시겠습니까?\n찾고 싶은 민원의 상황이나 내용을 다음 메시지에 1,000자 이내로 적어 주세요. 제목이 정확하지 않아도 됩니다. 다음 메시지 한 번만 본인이 작성한 민원에서 검색하며, 그 뒤에는 일반 상담으로 돌아갑니다.', job: null };
+    setMessages((previous) => existingId ? previous.map((item) => item.id === id ? { ...item, ...message } : item) : [...previous, message]);
+  }, []);
+
+  const cancelLookup = useCallback(() => { lookupRef.current = null; setLookupPrompt(null); }, []);
+  const applyLookupFilters = useCallback((filters, promptId) => {
+    if (requestLock.current || lookupRef.current?.id !== promptId || lookupRef.current?.kind !== 'filter') return;
+    if (!filters?.departments?.length || !filters.view_status) return;
+    openTool({ intent: 'filter', filters });
+    setMessages((previous) => previous.map((item) => item.id === promptId ? { ...item, filters } : item));
+  }, [openTool]);
+
+  const searchComplaints = useCallback(async (query, retryId = null) => {
+    if (!query.trim() || requestLock.current) return false;
+    requestLock.current = true;
+    cancelLookup();
+    const sequence = ++generation.current;
+    const id = retryId || `search-${Date.now()}-${sequence}`;
+    const key = ++toolSequence.current;
+    const toolAction = { intent: 'search', query, state: 'loading', key };
+    activeTurn.current = id;
+    updateToolContext(null); setToolRequest(toolAction); setToolsOpen(true);
+    setCreating(true); setJob(null); setError('');
+    const pendingMessage = { id, role: 'assistant', kind: 'search_result', searchQuery: query,
+      content: '작성한 민원에서 검색하고 있어요.', job: { status: 'searching' }, toolAction };
+    setMessages((previous) => retryId ? previous.map((item) => item.id === id ? pendingMessage : item) : [...previous,
+      { id: `${id}-user`, role: 'user', content: query, preserveContent: true }, pendingMessage]);
+    try {
+      const results = await api('/api/ai-recommendations/complaint-search', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query }) });
+      if (!mounted.current || sequence !== generation.current) return false;
+      if (!Array.isArray(results.complaints) || !Array.isArray(results.similar_complaints)) throw new Error('검색 결과를 읽지 못했습니다. 다시 시도해 주세요.');
+      const completed = { ...toolAction, state: 'complete', results };
+      setToolRequest((previous) => previous?.key === key ? completed : previous);
+      setMessages((previous) => previous.map((item) => item.id === id ? { ...item, job: null, toolAction: completed,
+        content: `검색된 민원 ${results.complaints.length}건과 유사한 민원 ${results.similar_complaints.length}건을 찾았습니다. 오른쪽 도구에서 확인해 주세요.` } : item));
+      return true;
+    } catch (failure) {
+      if (mounted.current && sequence === generation.current) {
+        setToolRequest((previous) => previous?.key === key ? { ...toolAction, state: 'failed', error: failure.message } : previous);
+        setMessages((previous) => previous.map((item) => item.id === id ? { ...item, job: { status: 'failed', error_message: failure.message } } : item));
+      }
+      return false;
+    } finally {
+      if (mounted.current && sequence === generation.current) { setCreating(false); requestLock.current = false; }
+    }
+  }, [api, cancelLookup]);
+
   const start = useCallback(async (body, preview = {}, retryId = null, routing = null) => {
     if (requestLock.current) return false;
+    cancelLookup();
     requestLock.current = true;
     const sequence = ++generation.current;
     const id = retryId || `turn-${Date.now()}-${sequence}`;
@@ -93,11 +153,16 @@ export function useRecommendations(api) {
         const decision = await api('/api/ai-recommendations/intent', { method: 'POST',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(routeInput) });
         if (!mounted.current || sequence !== generation.current) return false;
-        if (!['answer', 'create', 'list', 'edit', 'delete', 'close_tools'].includes(decision.intent)) {
+        if (!['answer', 'create', 'list', 'edit', 'delete', 'close_tools', 'filter', 'search'].includes(decision.intent)) {
           throw new Error('요청한 기능을 확인하지 못했습니다. 다시 질문하거나 민원 도구 버튼을 이용해 주세요.');
         }
         if (decision.intent !== 'answer') {
-          if (decision.intent === 'close_tools') closeTools();
+          if (['filter', 'search'].includes(decision.intent)) {
+            promptLookup(decision.intent, id);
+            requestLock.current = false;
+            return true;
+          }
+          if (decision.intent === 'close_tools') { cancelLookup(); closeTools(); }
           else if (['create', 'edit', 'delete'].includes(decision.intent) && toolContext?.mode === decision.intent &&
             (!decision.complaint_id || decision.complaint_id === toolContext.complaint_id) &&
             (decision.intent !== 'create' || !decision.draft)) setToolsOpen(true);
@@ -129,7 +194,7 @@ export function useRecommendations(api) {
     } finally {
       if (mounted.current && sequence === generation.current) setCreating(false);
     }
-  }, [api, updateTurn, messages, toolsOpen, toolContext, toolRequest, openTool, closeTools]);
+  }, [api, updateTurn, messages, toolsOpen, toolContext, toolRequest, openTool, closeTools, promptLookup, cancelLookup]);
 
   useEffect(() => {
     if (!job || !['queued', 'processing'].includes(job.status)) return;
@@ -156,6 +221,7 @@ export function useRecommendations(api) {
   const send = () => {
     const content = draft.trim();
     if (!content || requestLock.current) return;
+    if (lookupRef.current?.kind === 'search') { setDraft(''); return searchComplaints(content); }
     const parent = [...messages].reverse().find((message) => message.role === 'assistant' && message.job?.status === 'completed');
     const body = parent
       ? { parent_recommendation_id: parent.job.id, content }
@@ -166,9 +232,11 @@ export function useRecommendations(api) {
   const reset = () => {
     if (requestLock.current) return;
     generation.current++; activeTurn.current = null;
+    cancelLookup();
     setMessages([]); setDraft(''); setJob(null); setError('');
   };
   return { api, messages, draft, setDraft, job, error, busy, creating, start, send, reset,
+    lookupPrompt, promptLookup, cancelLookup, applyLookupFilters, searchComplaints,
     toolsOpen, toolRequest, toolContext, openTool, closeTools, toggleTools, reopenTool, setToolContext, notifyToolChanged };
 }
 
@@ -199,17 +267,25 @@ function AnswerOptions({ result }) {
 function AssistantMessage({ message, recommendation }) {
   const job = message.job;
   const result = job?.result;
-  const isToolMessage = ['tool', 'notice'].includes(message.kind);
+  const isSearch = message.kind === 'search_result';
+  const isLookup = ['filter_prompt', 'search_prompt'].includes(message.kind);
+  const isToolMessage = ['tool', 'notice'].includes(message.kind) || isLookup || isSearch;
   const pending = !isToolMessage && (!job || ['routing', 'queued', 'processing'].includes(job.status));
+  const activeLookup = recommendation.lookupPrompt?.id === message.id;
   return <article className="ai-chat-message ai-chat-message-assistant" aria-label="AI 답변">
     <span className="ai-chat-avatar" aria-hidden="true">AI</span>
     <div className="ai-chat-message-body">
       <span className="ai-chat-sender">민원 상담 도우미</span>
       <div className={`ai-chat-bubble ${result?.answer_status === 'insufficient_evidence' ? 'ai-chat-insufficient' : ''}`}>
-        {isToolMessage && <><MessageText text={message.content} />{message.toolAction?.intent !== 'close_tools' && message.kind === 'tool' &&
+        {isToolMessage && job?.status !== 'failed' && <><MessageText text={message.content} />{message.toolAction?.intent !== 'close_tools' && (message.kind === 'tool' || (isSearch && !job)) &&
           <button className="ai-chat-retry" onClick={() => recommendation.reopenTool(message.toolAction)}>도구 다시 열기</button>}</>}
+        {message.kind === 'filter_prompt' && <ComplaintFilters compact initialValue={message.filters} busy={recommendation.busy || !activeLookup}
+          onApply={(filters) => recommendation.applyLookupFilters(filters, message.id)} />}
+        {message.kind === 'search_prompt' && activeLookup && <button className="ai-chat-retry" onClick={recommendation.cancelLookup}>검색 취소</button>}
+        {message.kind === 'search_prompt' && !activeLookup && <p className="ai-chat-connection">이 검색 안내는 종료되었습니다. 다음 메시지는 일반 상담으로 처리합니다.</p>}
+        {isSearch && job?.status === 'searching' && <div className="ai-chat-thinking" role="status"><span className="ai-spinner" aria-hidden="true" /><span>민원을 검색하고 있어요.</span></div>}
         {pending && <div className="ai-chat-thinking" role="status"><span className="ai-spinner" aria-hidden="true" /><span>{stageLabels[job?.stage] || '답변을 준비하고 있어요.'}</span></div>}
-        {job?.status === 'failed' && <><p className="ai-message-text" role="alert">{job.error_message || '답변을 생성하지 못했습니다. 다시 시도해 주세요.'}</p><button className="ai-chat-retry" disabled={recommendation.busy} onClick={() => recommendation.start(message.request, {}, message.id, message.routing)}>다시 시도</button></>}
+        {job?.status === 'failed' && <><p className="ai-message-text" role="alert">{job.error_message || '답변을 생성하지 못했습니다. 다시 시도해 주세요.'}</p><button className="ai-chat-retry" disabled={recommendation.busy} onClick={() => isSearch ? recommendation.searchComplaints(message.searchQuery, message.id) : recommendation.start(message.request, {}, message.id, message.routing)}>다시 시도</button></>}
         {result && <>
           {result.answer_status === 'insufficient_evidence' && <span className="ai-chat-evidence-note">추가 근거가 필요해요</span>}
           <MessageText text={result.answer} />
@@ -273,8 +349,10 @@ export default function AIRecommendations({ recommendation, api = recommendation
           <button disabled={busy} onClick={newConversation}>새 대화 시작</button>
           <button onClick={() => { closeOptions(); openTool('create'); }}>새로운 민원 작성하기<small>오른쪽 도구에서 작성하고 접수</small></button>
           <button onClick={() => { closeOptions(); openTool('list'); }}>작성된 민원에서 선택하기<small>오른쪽 도구에서 확인·수정·삭제</small></button>
+          <button disabled={busy} onClick={() => { closeOptions(); setFormOpen(false); recommendation.promptLookup('filter'); }}>특정 민원 조회<small>부서와 처리 상태로 골라 보기</small></button>
+          <button disabled={busy} onClick={() => { closeOptions(); setFormOpen(false); recommendation.promptLookup('search'); inputRef.current?.focus(); }}>민원 검색<small>다음 메시지로 비슷한 내용 찾기</small></button>
           <button disabled={busy} onClick={() => { closeOptions(); setTitle(''); setContent(draft); setFormOpen(true); }}>제목·내용으로 AI 답변 받기<small>민원을 접수하지 않고 예상 답변 확인</small></button>
-          <details className="ai-chat-usage"><summary>이용 안내</summary><p>대화로 민원 작성이나 확인을 요청하면 오른쪽 도구를 열어 드립니다. 실제 접수·수정·삭제는 도구 창에서 버튼으로 확정합니다.</p><p>다른 메뉴로 이동해도 대화는 유지됩니다. 새로고침하거나 로그아웃하면 화면의 대화는 초기화됩니다.</p></details>
+          <details className="ai-chat-usage"><summary>이용 안내</summary><p>대화로 민원 작성이나 확인을 요청하면 오른쪽 도구를 열어 드립니다. ‘조회하고 싶어’는 부서·상태 선택, ‘검색하고 싶어’는 다음 메시지 한 번으로 작성한 민원을 찾습니다. 실제 접수·수정·삭제는 도구 창에서 버튼으로 확정합니다.</p><p>다른 메뉴로 이동해도 대화는 유지됩니다. 새로고침하거나 로그아웃하면 화면의 대화는 초기화됩니다.</p></details>
         </div>
       </details></div>
     </div>
@@ -286,7 +364,7 @@ export default function AIRecommendations({ recommendation, api = recommendation
       <div className="ai-chat-date">오늘</div>
       <article className="ai-chat-message ai-chat-message-assistant">
         <span className="ai-chat-avatar" aria-hidden="true">AI</span>
-        <div className="ai-chat-message-body"><span className="ai-chat-sender">민원 상담 도우미</span><div className="ai-chat-bubble"><p className="ai-message-text">안녕하세요! 어떤 도움이 필요하신가요?{ '\n' }궁금한 점을 물어보거나 “민원을 작성하고 싶어”, “내 민원을 확인하고 싶어”라고 말씀해 주세요.</p></div></div>
+        <div className="ai-chat-message-body"><span className="ai-chat-sender">민원 상담 도우미</span><div className="ai-chat-bubble"><p className="ai-message-text">안녕하세요! 어떤 도움이 필요하신가요?{ '\n' }궁금한 점을 물어보거나 “민원을 작성하고 싶어”, “내 민원을 확인하고 싶어”, “조회하고 싶어”, “검색하고 싶어”라고 말씀해 주세요.</p></div></div>
       </article>
       {messages.map((message) => message.role === 'user'
         ? <article key={message.id} className="ai-chat-message ai-chat-message-user" aria-label="내 메시지"><div className="ai-chat-message-body"><span className="ai-chat-sender">나</span><div className="ai-chat-bubble">{message.showTitle && message.title && <strong className="ai-chat-topic">{message.title}</strong>}<p className="ai-message-text">{message.content || '선택한 민원을 불러오고 있어요.'}</p></div></div></article>
@@ -301,7 +379,7 @@ export default function AIRecommendations({ recommendation, api = recommendation
         <button className="primary" type="submit" disabled={busy || !title.trim() || !content.trim()}>대화 시작</button>
       </form> : <form className="ai-chat-compose" aria-label="메시지 보내기" onSubmit={(event) => { event.preventDefault(); if (!busy) send(); }}>
         <label className="ai-chat-input-label" htmlFor="ai-chat-input">메시지</label>
-        <textarea id="ai-chat-input" ref={inputRef} rows={1} maxLength={4000} value={draft} disabled={busy} onChange={(event) => setDraft(event.target.value)} placeholder={busy ? '답변을 기다리고 있어요…' : messages.length ? '이어서 궁금한 점을 물어보세요' : '상황이나 궁금한 점을 입력해 주세요'} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={(event) => {
+        <textarea id="ai-chat-input" ref={inputRef} rows={1} maxLength={recommendation.lookupPrompt?.kind === 'search' ? 1000 : 4000} value={draft} disabled={busy} onChange={(event) => setDraft(event.target.value)} placeholder={busy ? '처리 결과를 기다리고 있어요…' : recommendation.lookupPrompt?.kind === 'search' ? '찾고 싶은 민원의 상황이나 내용을 입력해 주세요' : messages.length ? '이어서 궁금한 점을 물어보세요' : '상황이나 궁금한 점을 입력해 주세요'} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={(event) => {
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.keyCode !== 229) {
             event.preventDefault(); if (!busy) send();
           }

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from .db import connection, fetch_one
 from .chat_intent import ChatIntentBody, ChatIntentResult, IntentUnavailable, classify_chat_intent
+from .complaint_search import router as complaint_search_router
 from .rag import run_recommendation
 from .security import actor_from_auth
 
@@ -107,6 +108,9 @@ async def intent(body: ChatIntentBody, actor: Annotated[dict, Depends(actor_from
         return await classify_chat_intent(body)
     except IntentUnavailable as exc:
         raise HTTPException(503, str(exc)) from exc
+
+
+router.include_router(complaint_search_router)
 
 
 @router.get('/{recommendation_id}')

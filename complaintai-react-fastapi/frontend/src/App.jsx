@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { importPercentage } from "./importProgress.js";
 import departments from "../../app/departments.json";
 import AIRecommendations, { useRecommendations } from "./AIRecommendations.jsx";
+import ComplaintFilters, { appendComplaintFilters, citizenViewStatusLabel } from "./ComplaintFilters.jsx";
 
 const categories = departments.map((department) => department.name);
 const statusLabel = (value) => ({ "접수": "접수 대기", "진행중": "접수 됨" }[value] || value);
@@ -85,6 +86,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
   const [sourceFilter, setSourceFilter] = useState("all");
+  const [citizenFilters, setCitizenFilters] = useState(null);
   const [selected, setSelected] = useState(null);
   const [responseText, setResponseText] = useState("");
   const [transferTarget, setTransferTarget] = useState("");
@@ -102,15 +104,18 @@ function Workspace({ auth, api, signout, server, setServer }) {
   }, [api]);
   const load = useCallback(async (targetPage = page) => {
     const requestId = ++listRequest.current;
+    const citizenParams = new URLSearchParams({ deleted: "false", limit: String(pageSize), offset: String((targetPage - 1) * pageSize) });
+    if (citizenFilters) appendComplaintFilters(citizenParams, citizenFilters);
     const path = isAdmin
       ? `/api/complaints?deleted=${view === "deleted"}&category=${encodeURIComponent(view === "deleted" ? "" : active)}&source=${sourceFilter}&limit=${pageSize}&offset=${(targetPage - 1) * pageSize}`
-      : `/api/complaints?deleted=false&limit=${pageSize}&offset=${(targetPage - 1) * pageSize}`;
+      : `/api/complaints?${citizenParams}`;
     // Publish each successful response immediately. A count outage must not
     // hide a valid list or wait for the other request before showing its rows.
     const results = await Promise.allSettled([
       api(path).then((data) => {
         if (requestId !== listRequest.current) return;
         setRecords(data.complaints); setTotal(data.total);
+        if (targetPage > 1 && (targetPage - 1) * pageSize >= data.total) setPage(Math.max(1, Math.ceil(data.total / pageSize)));
       }),
       api("/api/complaints/counts").then((data) => {
         if (requestId !== listRequest.current) return;
@@ -121,7 +126,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
       }),
     ]);
     if (requestId === listRequest.current && results[0].status === "rejected") throw results[0].reason;
-  }, [active, api, isAdmin, page, pageSize, sourceFilter, view]);
+  }, [active, api, isAdmin, page, pageSize, sourceFilter, view, citizenFilters]);
   useEffect(() => { refresh().catch((error) => setMessage(error.message)); }, [refresh]);
   useEffect(() => {
     if (view === "categories" || view === "deleted" || view === "submitted") load().catch((error) => setMessage(error.message));
@@ -387,7 +392,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
         </article>}
       </section>}
       {view === "ai-recommendations" && !isAdmin && <AIRecommendations recommendation={recommendation} onToolsChanged={refresh} />}
-      {view === "submitted" && <>{selectingForAI && <div className="ai-selection-banner" role="status"><div><strong>AI 추천 답변을 확인할 민원을 선택하세요.</strong><p>선택하면 AI 추천 답변 화면으로 돌아가 자동으로 답변을 생성합니다.</p></div><button onClick={() => navigate("ai-recommendations")}>선택 취소</button></div>}<ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} empty="작성한 민원이 없습니다." user selectingForAI={selectingForAI} onSelectForAI={selectForAI} onEdit={edit} onDelete={remove} onFollowUp={writeFollowUp} /></>}
+      {view === "submitted" && <>{!isAdmin && <section className="panel citizen-list-filter"><details><summary>특정 민원 조회</summary><ComplaintFilters initialValue={citizenFilters} onApply={(filters) => { listRequest.current++; setRecords([]); setTotal(0); setCitizenFilters(filters); setPage(1); }} onClear={() => { listRequest.current++; setRecords([]); setTotal(0); setCitizenFilters(null); setPage(1); }} /></details>{citizenFilters && <p role="status">조회 조건이 적용되어 있습니다. 전체 목록은 ‘조건 초기화’로 확인할 수 있습니다.</p>}</section>}{selectingForAI && <div className="ai-selection-banner" role="status"><div><strong>AI 추천 답변을 확인할 민원을 선택하세요.</strong><p>선택하면 AI 추천 답변 화면으로 돌아가 자동으로 답변을 생성합니다.</p></div><button onClick={() => navigate("ai-recommendations")}>선택 취소</button></div>}<ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} empty="작성한 민원이 없습니다." user selectingForAI={selectingForAI} onSelectForAI={selectForAI} onEdit={edit} onDelete={remove} onFollowUp={writeFollowUp} /></>}
       {(view === "categories" || view === "deleted") && <><section className="category"><div className="category-head"><h2>{view === "deleted" ? "삭제된 데이터" : "분류 카테고리"}</h2></div>{countsError && <p className="muted" role="status">카테고리 건수를 불러오지 못했습니다. 민원 목록은 계속 사용할 수 있습니다. ({countsError})</p>}{view === "categories" && <div className="grid">{adminCategories.map((category) => <button key={category} className={`${active === category ? "selected" : ""} ${isAdmin && category === auth.user.department ? "department-owned" : ""}`} onClick={() => { setActive(category); setPage(1); }}><b>{counts[category] || 0}</b>{category}</button>)}</div>}</section><ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} sourceFilter={sourceFilter} setSourceFilter={setSourceFilter} deleted={view === "deleted"} canManageCategory={canManageCategory} canRunGlobalPurge={isAdmin} deletingScope={deletingScope} empty="표시할 민원이 없습니다." onSelect={chooseForIntake} onDelete={remove} onDeleteAll={removeCategory} onDepartmentPurge={deleteDepartmentAll} onRestore={restore} onHardDelete={hardDelete} /></>}
       {view === "intake" && <section className="department-workspace">
         <article className="panel intake">
@@ -455,7 +460,7 @@ function ComplaintList({ records, total, page, pageSize, setPage, setPageSize, s
     <div className="list">{records.map((record) => {
       const cancelled = record.complaint_status === "취소";
       return <article key={record.id} className={!record.submitted_by_user ? "file-complaint" : "user-complaint"}><div className="record-row"><div>
-        <h3>{record.title}</h3><small><span className="source-badge">{record.submitted_by_user ? "민원인 작성" : "파일 업로드"}</span> {record.category || "부서 판별중..."} · 상태: <b>{statusLabel(record.complaint_status)}</b> · {new Date(record.created_at).toLocaleDateString()}</small>
+        <h3>{record.title}</h3><small><span className="source-badge">{record.submitted_by_user ? "민원인 작성" : "파일 업로드"}</span> {record.category || "부서 판별중..."} · 상태: <b>{user ? citizenViewStatusLabel(record) : statusLabel(record.complaint_status)}</b> · {new Date(record.created_at).toLocaleDateString()}</small>
         {cancelled ? <div className="answer cancellation" role="status"><b>{record.cancelled_by_role === "user" ? "민원인이 해당 민원을 취소했습니다." : "민원이 취소되었습니다."}</b>{record.cancelled_by_role === "admin" && <p>취소 사유: {record.cancellation_reason || "사유가 기록되지 않았습니다."}</p>}</div> : <>
           {user ? <p className="original">{record.content}</p> : <><p>{record.summary}</p><details><summary>원본 민원 확인</summary><p className="original">{record.content}</p></details></>}
           <PreviousContext context={record.previous_context} />

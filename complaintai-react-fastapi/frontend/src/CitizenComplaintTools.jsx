@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import ComplaintFilters, { appendComplaintFilters, citizenViewStatusLabel, normalizeComplaintFilters } from "./ComplaintFilters.jsx";
 import "./citizenTools.css";
 
 const pageSize = 10;
-const statusLabel = (status) => ({ "접수": "접수 대기", "진행중": "접수 됨" }[status] || status);
 const available = (record) => record && !record.deleted_at && record.complaint_status !== "취소";
 const editable = (record) => available(record) && record.complaint_status === "접수";
 const removable = (record) => available(record) && ["접수", "진행중"].includes(record.complaint_status);
@@ -24,35 +24,93 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
   const [notice, setNotice] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [accessBlocked, setAccessBlocked] = useState(false);
+  const [listKind, setListKind] = useState("normal");
+  const [appliedFilters, setAppliedFilters] = useState(null);
+  const [filterInitial, setFilterInitial] = useState(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [search, setSearch] = useState({ state: null, query: "", complaints: [], similar_complaints: [] });
+  const [similarPage, setSimilarPage] = useState(1);
+  const [processedRequest, setProcessedRequest] = useState(null);
   const mutationLock = useRef(false);
   const listSequence = useRef(0);
   const detailSequence = useRef(0);
+  const searchReadSequence = useRef(0);
+  const searchReading = useRef(false);
   const handledRequest = useRef(null);
   const selectedRef = useRef(null);
   const modeRef = useRef(mode);
+  const listKindRef = useRef(listKind);
+  const searchRef = useRef(search);
+  const searchPages = useRef({ page, similarPage });
   const mounted = useRef(true);
   const callbacks = useRef({ onContextChange, onChanged, onRecommend });
   callbacks.current = { onContextChange, onChanged, onRecommend };
   modeRef.current = mode;
+  listKindRef.current = listKind;
+  searchRef.current = search;
+  searchPages.current = { page, similarPage };
+  const requestSignature = request ? `${request.key}:${request.intent}:${request.intent === "search" ? request.state || "" : ""}` : null;
+  const incomingRequest = Boolean(request && processedRequest !== requestSignature);
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; handledRequest.current = null; listSequence.current += 1; detailSequence.current += 1; };
+    return () => { mounted.current = false; handledRequest.current = null; listSequence.current += 1; detailSequence.current += 1; searchReadSequence.current += 1; };
   }, []);
 
   const commitSelected = useCallback((record) => { selectedRef.current = record; setSelected(record); setAccessBlocked(false); }, []);
+  const commitSearch = useCallback((value) => {
+    const next = typeof value === "function" ? value(searchRef.current) : value;
+    searchRef.current = next; setSearch(next);
+  }, []);
   const loadList = useCallback(async (targetPage, quiet = false) => {
     const sequence = ++listSequence.current;
     if (!quiet) setLoading(true);
     try {
-      const data = await api(`/api/complaints?deleted=false&limit=${pageSize}&offset=${(targetPage - 1) * pageSize}`);
+      const params = appendComplaintFilters(new URLSearchParams({ deleted: "false", limit: String(pageSize), offset: String((targetPage - 1) * pageSize) }), appliedFilters);
+      const data = await api(`/api/complaints?${params}`);
       if (!mounted.current || sequence !== listSequence.current) return;
       setRecords(data.complaints || []); setTotal(data.total || 0);
       if (data.total > 0 && (targetPage - 1) * pageSize >= data.total) setPage(Math.max(1, Math.ceil(data.total / pageSize)));
     } catch (failure) {
       if (mounted.current && sequence === listSequence.current) setError(failure.message);
     } finally { if (mounted.current && sequence === listSequence.current) setLoading(false); }
-  }, [api]);
+  }, [api, appliedFilters]);
+
+  const refreshSearch = useCallback(async () => {
+    if (searchReading.current || listKindRef.current !== "search" || searchRef.current.state !== "complete") return;
+    const sequence = ++searchReadSequence.current;
+    const snapshot = searchRef.current;
+    const currentPages = searchPages.current;
+    const visibleRows = [...snapshot.complaints.slice((currentPages.page - 1) * pageSize, currentPages.page * pageSize), ...snapshot.similar_complaints.slice((currentPages.similarPage - 1) * pageSize, currentPages.similarPage * pageSize)];
+    const ids = [...new Set(visibleRows.map((record) => record.id))];
+    if (!ids.length) return;
+    searchReading.current = true;
+    try {
+      const results = await Promise.allSettled(ids.map((id) => api(`/api/complaints/${id}`)));
+      if (!mounted.current || sequence !== searchReadSequence.current || listKindRef.current !== "search") return;
+      const current = new Map(ids.map((id, index) => [id, results[index]]));
+      let readError = "";
+      let textChanged = false;
+      const reconcile = (rows) => rows.flatMap((record) => {
+        const result = current.get(record.id);
+        if (!result) return [record];
+        if (result.status === "fulfilled") {
+          const latest = result.value.complaint;
+          if (!available(latest)) return [];
+          if (record.title !== latest.title || record.content !== latest.content) { textChanged = true; return []; }
+          return [{ ...record, ...latest, access_unverified: false }];
+        }
+        if (result.reason?.status === 404 || /민원을 찾|본인 민원|권한|삭제\(취소\)/.test(result.reason?.message || "")) return [];
+        readError = result.reason?.message || "민원 상태를 확인하지 못했습니다.";
+        return [{ ...record, access_unverified: true }];
+      });
+      const complaints = reconcile(snapshot.complaints);
+      const similar = reconcile(snapshot.similar_complaints);
+      commitSearch((value) => ({ ...value, complaints, similar_complaints: similar }));
+      if (readError) setError(readError);
+      if (textChanged) setNotice("내용이 변경된 민원을 이전 검색 결과에서 제외했습니다. 다시 검색해 주세요.");
+    } finally { searchReading.current = false; }
+  }, [api, commitSearch]);
 
   const applyIntent = useCallback((record, intent) => {
     setDeleteConfirm(false);
@@ -96,23 +154,61 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
     commitSelected(null); setDeleteConfirm(false); setMode("list"); setError(""); setNotice(""); setLoading(false);
   }, [commitSelected]);
 
-  useEffect(() => {
-    if (!request || busy || handledRequest.current === request.key) return;
-    handledRequest.current = request.key;
-    if (request.intent === "create") newComplaint(request.draft);
-    else if (request.complaint_id) selectRecord(request.complaint_id, request.intent);
-    else {
-      showList(); setPage(1);
-      if (["edit", "delete"].includes(request.intent)) setNotice(request.intent === "edit" ? "수정할 민원을 선택한 다음 ‘민원 수정’을 눌러 주세요." : "삭제할 민원을 선택한 다음 ‘민원 삭제’를 눌러 주세요.");
-    }
-  }, [request, busy, newComplaint, selectRecord, showList]);
+  const applyFilters = useCallback((filters) => {
+    const normalized = normalizeComplaintFilters(filters);
+    if (mutationLock.current || !normalized.departments.length || !normalized.view_status) return;
+    searchReadSequence.current += 1;
+    setListKind("normal"); setAppliedFilters(normalized); setFilterInitial(normalized); setFiltersOpen(false);
+    setRecords([]); setTotal(0); setPage(1); showList();
+  }, [showList]);
+
+  const clearFilters = useCallback(() => {
+    if (mutationLock.current) return;
+    searchReadSequence.current += 1;
+    setListKind("normal"); setAppliedFilters(null); setFilterInitial(null); setPage(1); setRecords([]); setTotal(0); showList();
+  }, [showList]);
 
   useEffect(() => {
-    if (!visible || mode !== "list") return;
+    if (!request || busy || handledRequest.current === requestSignature) return;
+    handledRequest.current = requestSignature;
+    setProcessedRequest(requestSignature);
+    if (request.intent === "search") {
+      searchReadSequence.current += 1;
+      const data = request.results || {};
+      setListKind("search"); setPage(1); setSimilarPage(1); setFiltersOpen(false); showList();
+      commitSearch({ state: request.state || "loading", query: request.query || data.query || "", complaints: data.complaints || [], similar_complaints: data.similar_complaints || [] });
+      if (request.state === "failed") setError(request.error || "민원을 검색하지 못했습니다. 다시 검색해 주세요.");
+    } else if (request.intent === "filter") {
+      const normalized = normalizeComplaintFilters(request.filters);
+      if (normalized.departments.length && normalized.view_status) applyFilters(normalized);
+      else { clearFilters(); setFilterInitial(normalized); setFiltersOpen(true); }
+    } else if (request.intent === "create") newComplaint(request.draft);
+    else if (request.complaint_id) selectRecord(request.complaint_id, request.intent);
+    else {
+      setListKind("normal"); showList(); setPage(1);
+      if (["edit", "delete"].includes(request.intent)) setNotice(request.intent === "edit" ? "수정할 민원을 선택한 다음 ‘민원 수정’을 눌러 주세요." : "삭제할 민원을 선택한 다음 ‘민원 삭제’를 눌러 주세요.");
+    }
+  }, [request, requestSignature, busy, newComplaint, selectRecord, showList, applyFilters, clearFilters, commitSearch]);
+
+  useEffect(() => {
+    if (!visible || mode !== "list" || listKind !== "normal" || incomingRequest) return;
     loadList(page);
     const timer = window.setInterval(() => { if (!mutationLock.current) loadList(page, true); }, 3000);
     return () => { window.clearInterval(timer); listSequence.current += 1; };
-  }, [visible, mode, page, loadList]);
+  }, [visible, mode, page, loadList, listKind, incomingRequest]);
+
+  useEffect(() => {
+    if (!visible || mode !== "list" || listKind !== "search" || search.state !== "complete") return;
+    refreshSearch().catch((failure) => { if (mounted.current) setError(failure.message); });
+    const timer = window.setInterval(() => { if (!mutationLock.current) refreshSearch().catch((failure) => { if (mounted.current) setError(failure.message); }); }, 3000);
+    return () => window.clearInterval(timer);
+  }, [visible, mode, listKind, search.state, search.query, page, similarPage, refreshSearch]);
+
+  useEffect(() => {
+    if (listKind !== "search") return;
+    setPage((current) => Math.min(current, Math.max(1, Math.ceil(search.complaints.length / pageSize))));
+    setSimilarPage((current) => Math.min(current, Math.max(1, Math.ceil(search.similar_complaints.length / pageSize))));
+  }, [listKind, search.complaints.length, search.similar_complaints.length]);
 
   const refreshSelection = useCallback(async () => {
     const current = selectedRef.current;
@@ -160,6 +256,7 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
     if (mutationLock.current || accessBlocked || !content.trim() || (mode === "edit" && !editable(selected)) || (mode === "follow-up" && (!available(selected) || selected.complaint_status !== "완료"))) return;
     const currentMode = mode;
     const parentId = selected?.id;
+    const originalRecord = selected;
     const draft = { title, content };
     mutationLock.current = true; setBusy(true); setError(""); setNotice("");
     try {
@@ -168,12 +265,18 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
       if (!mounted.current) return;
       const record = { ...draft, complaint_status: "접수", ...result.complaint };
       commitSelected(record); setMode("detail"); setDeleteConfirm(false); setPage(1);
-      const message = result.message || (currentMode === "edit" ? "민원이 수정되었습니다." : currentMode === "follow-up" ? "이전 민원과 답변을 포함한 재민원이 접수되었습니다." : "민원이 접수되었습니다.");
+      const searchChanged = listKindRef.current === "search" && currentMode === "edit" && (originalRecord?.title !== draft.title || originalRecord?.content !== draft.content);
+      if (searchChanged) {
+        searchReadSequence.current += 1;
+        commitSearch((current) => ({ ...current, complaints: current.complaints.filter((item) => item.id !== record.id), similar_complaints: current.similar_complaints.filter((item) => item.id !== record.id) }));
+      }
+      const message = (result.message || (currentMode === "edit" ? "민원이 수정되었습니다." : currentMode === "follow-up" ? "이전 민원과 답변을 포함한 재민원이 접수되었습니다." : "민원이 접수되었습니다.")) + (searchChanged ? " 수정한 민원은 이전 검색 결과에서 제외했습니다. 다시 검색해 주세요." : "");
       setNotice(message);
       callbacks.current.onChanged?.({ action: currentMode === "edit" ? "edit" : currentMode === "follow-up" ? "follow-up" : "create", record, message });
       // A successful POST must remain successful even if the later detail
       // refresh fails. Never retry a completed mutation because of that read.
       if (record.id) refreshSelection().catch((failure) => { if (mounted.current) setError(`민원은 저장되었지만 최신 상태를 불러오지 못했습니다. ${failure.message}`); });
+      if (listKindRef.current === "search") refreshSearch().catch((failure) => { if (mounted.current) setError(failure.message); });
     } catch (failure) {
       if (mounted.current) {
         setError(failure.message);
@@ -192,7 +295,11 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
       detailSequence.current += 1; commitSelected(null); setDeleteConfirm(false); setMode("list"); setPage(1);
       const message = result.message || "민원이 취소되었습니다.";
       setNotice(message); callbacks.current.onChanged?.({ action: "delete", record, message });
-      loadList(1, true);
+      if (listKindRef.current === "search") {
+        searchReadSequence.current += 1;
+        commitSearch((current) => ({ ...current, complaints: current.complaints.filter((item) => item.id !== record.id), similar_complaints: current.similar_complaints.filter((item) => item.id !== record.id) }));
+        refreshSearch().catch((failure) => { if (mounted.current) setError(failure.message); });
+      } else loadList(1, true);
     } catch (failure) {
       if (mounted.current) { setError(failure.message); await refreshSelection().catch(() => {}); }
     } finally { mutationLock.current = false; if (mounted.current) setBusy(false); }
@@ -204,9 +311,13 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
     setTitle(`재민원: ${selected.title}`); setContent(""); setMode("follow-up"); setDeleteConfirm(false); setError(""); setNotice("");
   };
 
-  return <section className="citizen-tools" aria-label="민원 도구" hidden={!visible} aria-busy={busy || loading}>
+  const renderRows = (rows) => rows.map((record) => <article key={record.id} className="citizen-tools-list-item"><button type="button" disabled={busy || loading || record.access_unverified} onClick={() => selectRecord(record.id)} aria-label={`민원 #${record.id} ${record.title} 확인`}><strong>{record.title}</strong><small>#{record.id} · {record.category || "부서 판별 중"} · {citizenViewStatusLabel(record)}</small></button>{record.complaint_status === "취소" && <small className="citizen-tools-muted">취소된 민원 · 처리 불가</small>}{record.access_unverified && <small className="citizen-tools-muted">최신 상태 확인이 필요합니다.</small>}</article>);
+  const renderPagination = (count, currentPage, changePage, label = "") => <footer className="citizen-tools-pagination"><span>{count}건 · {currentPage}페이지</span><button type="button" aria-label={label ? `${label} 이전` : undefined} disabled={busy || loading || currentPage <= 1} onClick={() => changePage((current) => current - 1)}>이전</button><button type="button" aria-label={label ? `${label} 다음` : undefined} disabled={busy || loading || currentPage * pageSize >= count} onClick={() => changePage((current) => current + 1)}>다음</button></footer>;
+
+  const searchLoading = listKind === "search" && search.state === "loading";
+  return <section className="citizen-tools" aria-label="민원 도구" hidden={!visible} aria-busy={busy || loading || searchLoading}>
     <header className="citizen-tools-header"><div><span>챗봇과 함께 이용하기</span><h2>민원 도구</h2></div><button type="button" className="citizen-tools-close" aria-label="도구 창 닫기" onClick={onClose}>×</button></header>
-    <nav className="citizen-tools-tabs" aria-label="민원 도구 선택"><button type="button" aria-pressed={mode === "create"} disabled={busy} onClick={() => newComplaint()}>새 민원 작성</button><button type="button" aria-pressed={mode !== "create"} disabled={busy} onClick={showList}>작성한 민원 확인</button></nav>
+    <nav className="citizen-tools-tabs" aria-label="민원 도구 선택"><button type="button" aria-pressed={mode === "create"} disabled={busy || searchLoading} onClick={() => newComplaint()}>새 민원 작성</button><button type="button" aria-pressed={mode !== "create"} disabled={busy || searchLoading} onClick={() => { setListKind("normal"); showList(); }}>작성한 민원 확인</button></nav>
     <div className="citizen-tools-body">
       {error && <p className="citizen-tools-error" role="alert">{error}</p>}
       {notice && <p className="citizen-tools-notice" role="status">{notice}</p>}
@@ -223,12 +334,24 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
         <div className="citizen-tools-actions"><button type="submit" className="citizen-tools-primary" disabled={busy || accessBlocked || !content.trim() || (mode === "edit" && !editable(selected)) || (mode === "follow-up" && (!available(selected) || selected.complaint_status !== "완료"))}>{busy ? "저장 중..." : mode === "edit" ? "수정 저장" : mode === "follow-up" ? "재민원 접수" : "민원 접수"}</button>{mode !== "create" && <button type="button" disabled={busy} onClick={() => { setMode("detail"); setError(""); setNotice(""); }}>{mode === "edit" ? "수정 취소" : "재민원 작성 취소"}</button>}</div>
         <button type="button" className="citizen-tools-ai" disabled={busy || accessBlocked || recommendationBusy || !content.trim() || !title.trim()} onClick={() => callbacks.current.onRecommend?.(recommendationRecord())}>작성 내용으로 AI 답변 보기</button>
       </form>}
-      {mode === "list" && <div className="citizen-tools-list"><div className="citizen-tools-list-heading"><h3>내 민원 목록</h3><button type="button" disabled={busy || loading} onClick={() => { setError(""); loadList(page); }}>새로고침</button></div>
-        {!loading && records.length === 0 && <p className="citizen-tools-muted">작성한 민원이 없습니다.</p>}
-        {records.map((record) => <article key={record.id} className="citizen-tools-list-item"><button type="button" disabled={busy || loading} onClick={() => selectRecord(record.id)} aria-label={`민원 #${record.id} ${record.title} 확인`}><strong>{record.title}</strong><small>#{record.id} · {record.category || "부서 판별 중"} · {statusLabel(record.complaint_status)}</small></button>{record.complaint_status === "취소" && <small className="citizen-tools-muted">취소된 민원 · 처리 불가</small>}</article>)}
-        <footer className="citizen-tools-pagination"><span>{total}건 · {page}페이지</span><button type="button" disabled={busy || loading || page <= 1} onClick={() => setPage((current) => current - 1)}>이전</button><button type="button" disabled={busy || loading || page * pageSize >= total} onClick={() => setPage((current) => current + 1)}>다음</button></footer>
+      {mode === "list" && <div className="citizen-tools-list"><div className="citizen-tools-list-heading"><h3>{listKind === "search" ? "검색된 민원" : "내 민원 목록"}</h3><div className="citizen-tools-list-options"><button type="button" aria-expanded={filtersOpen} disabled={busy || (listKind === "search" && search.state === "loading")} onClick={() => setFiltersOpen((current) => !current)}>조회 옵션</button><button type="button" disabled={busy || loading || (listKind === "search" && search.state !== "complete")} onClick={() => { setError(""); if (listKind === "search") refreshSearch(); else loadList(page); }}>새로고침</button></div></div>
+        {filtersOpen && <ComplaintFilters initialValue={filterInitial || appliedFilters} onApply={applyFilters} onClear={clearFilters} busy={busy || loading} compact />}
+        {listKind === "normal" && <>
+          {appliedFilters && <p className="citizen-tools-filter-summary" role="status">조회 조건: {appliedFilters.departments.join(", ")} · {({ unassigned: "미접수", in_progress: "접수 중", completed: "접수 완료" })[appliedFilters.view_status]}</p>}
+          {!loading && records.length === 0 && <p className="citizen-tools-muted">작성한 민원이 없습니다.</p>}
+          {renderRows(records)}{renderPagination(total, page, setPage)}
+        </>}
+        {listKind === "search" && <>
+          <p className="citizen-tools-search-query">검색 내용: {search.query}</p>
+          {search.state === "loading" && <div className="citizen-tools-search-loading" role="status"><span aria-hidden="true" />관련 민원을 검색하고 있습니다.</div>}
+          {search.state === "failed" && <p className="citizen-tools-muted">채팅에서 검색을 다시 요청해 주세요.</p>}
+          {search.state === "complete" && <>
+            <section aria-label="검색된 민원" className="citizen-tools-search-results">{search.complaints.length ? renderRows(search.complaints.slice((page - 1) * pageSize, page * pageSize)) : <p className="citizen-tools-muted">검색 내용에 해당하는 민원이 없습니다.</p>}{renderPagination(search.complaints.length, page, setPage, "검색된 민원")}</section>
+            <section aria-label="검색과 유사한 민원" className="citizen-tools-search-similar"><h3>검색과 유사한 민원</h3>{search.similar_complaints.length ? renderRows(search.similar_complaints.slice((similarPage - 1) * pageSize, similarPage * pageSize)) : <p className="citizen-tools-muted">추가로 표시할 유사 민원이 없습니다.</p>}{renderPagination(search.similar_complaints.length, similarPage, setSimilarPage, "검색과 유사한 민원")}</section>
+          </>}
+        </>}
       </div>}
-      {mode === "detail" && selected && <article className="citizen-tools-detail"><div className="citizen-tools-detail-heading"><h3>{selected.title || `민원 #${selected.id}`}</h3><span>#{selected.id} · {statusLabel(selected.complaint_status)}</span></div>
+      {mode === "detail" && selected && <article className="citizen-tools-detail"><div className="citizen-tools-detail-heading"><h3>{selected.title || `민원 #${selected.id}`}</h3><span>#{selected.id} · {citizenViewStatusLabel(selected)}</span></div>
         <p className="citizen-tools-muted">{selected.category || "담당 부서 판별 중"}{selected.analysis_state === "pending" || selected.analysis_state === "processing" ? " · 민원 분석 중" : ""}</p>
         {!available(selected) ? <div className="citizen-tools-cancellation"><strong>민원이 취소되었습니다.</strong><p>{selected.cancelled_by_role === "user" ? "민원인이 해당 민원을 취소했습니다." : selected.cancellation_reason || "취소 사유가 기록되지 않았습니다."}</p></div> : <>
           <h4>민원 내용</h4><p className="citizen-tools-original">{selected.content}</p><PreviousContext context={selected.previous_context} />

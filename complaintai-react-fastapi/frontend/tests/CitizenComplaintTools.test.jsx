@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import CitizenComplaintTools from '../src/CitizenComplaintTools.jsx';
+import ComplaintFilters, { appendComplaintFilters, citizenViewStatusLabel, departmentLabels } from '../src/ComplaintFilters.jsx';
 
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 const row = (overrides = {}) => ({ id: 42, title: '도로 보수 요청', content: '보도블록이 깨져 통행이 어렵습니다.', complaint_status: '접수', category: '국토교통', latest_response: '', latest_response_state: '', ...overrides });
@@ -12,6 +13,156 @@ const ownApi = (record = row()) => vi.fn(async (path, options) => {
   if (options?.method === 'DELETE') return { message: '민원이 취소되었습니다.' };
   if (options?.method) return { complaint: { ...record, ...JSON.parse(options.body) } };
   return path.includes('?') ? { complaints: [record], total: 1 } : { complaint: record };
+});
+
+describe('complaint lookup filters and cached chatbot search', () => {
+  it('requires a department and exactly one status before applying the shared filter', () => {
+    const apply = vi.fn(); const clear = vi.fn();
+    render(<ComplaintFilters onApply={apply} onClear={clear} />);
+    expect(screen.getAllByRole('checkbox')).toHaveLength(7);
+    const button = screen.getByRole('button', { name: '조회하기' });
+    expect(button.disabled).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: departmentLabels[1] }));
+    expect(button.disabled).toBe(true);
+    fireEvent.click(screen.getByRole('radio', { name: '접수 중' }));
+    expect(button.disabled).toBe(false);
+    fireEvent.click(screen.getByRole('checkbox', { name: departmentLabels[3] }));
+    fireEvent.click(button);
+    expect(apply).toHaveBeenCalledWith({ departments: [departmentLabels[1], departmentLabels[3]], view_status: 'in_progress' });
+    fireEvent.click(screen.getByRole('radio', { name: '미접수' }));
+    expect(screen.getByRole('radio', { name: '접수 중' }).checked).toBe(false);
+    expect(screen.getByText(/선택한 부서와 관계없이 본인의 부서 미정/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '조건 초기화' }));
+    expect(button.disabled).toBe(true); expect(clear).toHaveBeenCalledOnce();
+  });
+
+  it('serializes repeated department filters without accepting unknown names or duplicating earlier values', () => {
+    const params = appendComplaintFilters(new URLSearchParams('limit=10&departments=old&view_status=old'), { departments: [departmentLabels[1], departmentLabels[1], '없는 부서', departmentLabels[3]], view_status: 'completed' });
+    expect(params.getAll('departments')).toEqual([departmentLabels[1], departmentLabels[3]]);
+    expect(params.get('view_status')).toBe('completed'); expect(params.get('limit')).toBe('10');
+    appendComplaintFilters(params, null);
+    expect(params.has('departments')).toBe(false); expect(params.has('view_status')).toBe(false);
+  });
+
+  it('uses the same department-and-official-response statuses as lookup filters', () => {
+    expect(citizenViewStatusLabel(row({ category: null }))).toBe('미접수');
+    expect(citizenViewStatusLabel(row({ latest_response_state: 'draft' }))).toBe('접수 중');
+    expect(citizenViewStatusLabel(row({ complaint_status: '접수', latest_response_state: 'sent' }))).toBe('접수 완료');
+    expect(citizenViewStatusLabel(row({ complaint_status: '취소', latest_response_state: 'sent' }))).toBe('취소');
+  });
+
+  it('applies server-side filters, preserves them after detail and can clear them', async () => {
+    const api = ownApi();
+    render(<CitizenComplaintTools {...defaults(api)} request={request('list')} />);
+    fireEvent.click(await screen.findByRole('button', { name: '조회 옵션' }));
+    const filters = screen.getByRole('region', { name: '민원 조회 조건' });
+    fireEvent.click(within(filters).getByRole('checkbox', { name: departmentLabels[1] }));
+    fireEvent.click(within(filters).getByRole('checkbox', { name: departmentLabels[3] }));
+    fireEvent.click(within(filters).getByRole('radio', { name: '접수 중' }));
+    fireEvent.click(within(filters).getByRole('button', { name: '조회하기' }));
+    await waitFor(() => expect(api.mock.calls.some(([path]) => new URL(path, 'http://local').searchParams.get('view_status') === 'in_progress')).toBe(true));
+    const filteredPath = api.mock.calls.find(([path]) => path.includes('view_status='))[0];
+    expect(new URL(filteredPath, 'http://local').searchParams.getAll('departments')).toEqual([departmentLabels[1], departmentLabels[3]]);
+    fireEvent.click(await screen.findByRole('button', { name: '민원 #42 도로 보수 요청 확인' }));
+    fireEvent.click(await screen.findByRole('button', { name: '목록으로 돌아가기' }));
+    await screen.findByRole('button', { name: '민원 #42 도로 보수 요청 확인' });
+    fireEvent.click(screen.getByRole('button', { name: '조회 옵션' }));
+    expect(screen.getByRole('checkbox', { name: departmentLabels[1] }).checked).toBe(true);
+    expect(screen.getByRole('radio', { name: '접수 중' }).checked).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '조건 초기화' }));
+    await waitFor(() => expect(api.mock.calls.at(-1)[0]).toBe('/api/complaints?deleted=false&limit=10&offset=0'));
+    expect(screen.queryByText(/^조회 조건:/)).toBeNull();
+  });
+
+  it('honors an external filter request before loading a generic list', async () => {
+    const api = ownApi();
+    render(<CitizenComplaintTools {...defaults(api)} request={request('filter', { filters: { departments: [departmentLabels[5]], view_status: 'unassigned' } })} />);
+    await screen.findByRole('button', { name: '민원 #42 도로 보수 요청 확인' });
+    expect(api.mock.calls.filter(([path]) => path.includes('?')).every(([path]) => new URL(path, 'http://local').searchParams.get('view_status') === 'unassigned')).toBe(true);
+    expect(screen.getByText(/^조회 조건:/).textContent).toContain('미접수');
+  });
+
+  it('updates the same search request from loading to complete, opens details and returns to both result groups', async () => {
+    const direct = row(); const similar = row({ id: 43, title: '인도 파손 신고' });
+    const api = vi.fn(async (path) => ({ complaint: path.endsWith('/43') ? similar : direct }));
+    const props = defaults(api);
+    const searchRequest = request('search', { query: '보도블록 관련 민원', state: 'loading' });
+    const { rerender } = render(<CitizenComplaintTools {...props} request={searchRequest} />);
+    expect(screen.getByText('관련 민원을 검색하고 있습니다.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '새 민원 작성' }).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: '작성한 민원 확인' }).disabled).toBe(true);
+    expect(api).not.toHaveBeenCalled();
+    rerender(<CitizenComplaintTools {...props} request={{ ...searchRequest, state: 'complete', results: { complaints: [direct], similar_complaints: [similar], total: 1, similar_total: 1 } }} />);
+    const directList = await screen.findByRole('region', { name: '검색된 민원' });
+    expect(within(directList).getByRole('button', { name: '민원 #42 도로 보수 요청 확인' })).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: '검색과 유사한 민원' })).getByRole('button', { name: '민원 #43 인도 파손 신고 확인' })).toBeTruthy();
+    fireEvent.click(within(directList).getByRole('button', { name: '민원 #42 도로 보수 요청 확인' }));
+    await screen.findByRole('button', { name: '민원 수정' });
+    fireEvent.click(screen.getByRole('button', { name: '목록으로 돌아가기' }));
+    await screen.findByRole('region', { name: '검색과 유사한 민원' });
+    expect(screen.getByText('검색 내용: 보도블록 관련 민원')).toBeTruthy();
+    expect(mutations(api)).toHaveLength(0);
+    expect(api.mock.calls.every(([path]) => /^\/api\/complaints\/\d+$/.test(path))).toBe(true);
+  });
+
+  it('clears earlier rows when a later search fails and shows the failure without fallback results', async () => {
+    const api = ownApi();
+    const props = defaults(api);
+    const { rerender } = render(<CitizenComplaintTools {...props} request={request('search', { state: 'complete', query: '첫 검색', results: { complaints: [row()], similar_complaints: [] } })} />);
+    await screen.findByRole('button', { name: '민원 #42 도로 보수 요청 확인' });
+    rerender(<CitizenComplaintTools {...props} request={{ key: 'next-search', intent: 'search', state: 'failed', query: '다른 검색', error: '검색 모델 응답 실패' }} />);
+    await screen.findByRole('alert');
+    expect(screen.getByRole('alert').textContent).toBe('검색 모델 응답 실패');
+    expect(screen.queryByRole('button', { name: '민원 #42 도로 보수 요청 확인' })).toBeNull();
+    expect(screen.getByText('검색 내용: 다른 검색')).toBeTruthy();
+  });
+
+  it('paginates direct and similar results independently and reads only visible result IDs', async () => {
+    const direct = Array.from({ length: 12 }, (_, index) => row({ id: index + 1 }));
+    const similar = Array.from({ length: 12 }, (_, index) => row({ id: index + 101 }));
+    const all = [...direct, ...similar];
+    const api = vi.fn(async (path) => ({ complaint: all.find(({ id }) => id === Number(path.split('/').at(-1))) }));
+    render(<CitizenComplaintTools {...defaults(api)} request={request('search', { state: 'complete', query: '도로 관련', results: { complaints: direct, similar_complaints: similar } })} />);
+    await screen.findByRole('button', { name: '민원 #1 도로 보수 요청 확인' });
+    await waitFor(() => expect(api.mock.calls).toHaveLength(20));
+    expect(api.mock.calls.some(([path]) => path === '/api/complaints/11' || path === '/api/complaints/111')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '검색된 민원 다음' }));
+    await screen.findByRole('button', { name: '민원 #11 도로 보수 요청 확인' });
+    await waitFor(() => expect(api).toHaveBeenCalledWith('/api/complaints/11'));
+    expect(screen.getByRole('button', { name: '민원 #101 도로 보수 요청 확인' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '민원 #111 도로 보수 요청 확인' })).toBeNull();
+  });
+
+  it('removes an edited complaint from cached semantic results and asks for a new search', async () => {
+    let current = row();
+    const api = vi.fn(async (path, options) => {
+      if (options?.method === 'PATCH') { current = { ...current, ...JSON.parse(options.body) }; return { complaint: current }; }
+      return { complaint: current };
+    });
+    const props = defaults(api);
+    render(<CitizenComplaintTools {...props} request={request('search', { state: 'complete', query: '도로', results: { complaints: [row()], similar_complaints: [] } })} />);
+    fireEvent.click(await screen.findByRole('button', { name: '민원 #42 도로 보수 요청 확인' }));
+    fireEvent.click(await screen.findByRole('button', { name: '민원 수정' }));
+    fireEvent.change(screen.getByLabelText('도구 민원 내용'), { target: { value: '수정된 내용' } });
+    fireEvent.click(screen.getByRole('button', { name: '수정 저장' }));
+    await screen.findByText('민원이 수정되었습니다. 수정한 민원은 이전 검색 결과에서 제외했습니다. 다시 검색해 주세요.');
+    fireEvent.click(screen.getByRole('button', { name: '목록으로 돌아가기' }));
+    await screen.findByText('검색 내용에 해당하는 민원이 없습니다.');
+    expect(screen.queryByRole('button', { name: '민원 #42 도로 보수 요청 확인' })).toBeNull();
+    expect(mutations(api)).toHaveLength(1);
+  });
+
+  it('removes externally changed or deleted cached results on a status refresh without rerunning search', async () => {
+    const direct = row(); const similar = row({ id: 43, title: '유사 민원' });
+    const api = vi.fn(async (path) => ({ complaint: path.endsWith('/43') ? { ...similar, complaint_status: '취소', deleted_at: '2026-10-14' } : { ...direct, content: '검색 이후 변경된 원문' } }));
+    render(<CitizenComplaintTools {...defaults(api)} request={request('search', { state: 'complete', query: '도로', results: { complaints: [direct], similar_complaints: [similar] } })} />);
+    await screen.findByText('내용이 변경된 민원을 이전 검색 결과에서 제외했습니다. 다시 검색해 주세요.');
+    expect(screen.queryByRole('button', { name: '민원 #42 도로 보수 요청 확인' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '민원 #43 유사 민원 확인' })).toBeNull();
+    expect(screen.getByText('검색 내용에 해당하는 민원이 없습니다.')).toBeTruthy();
+    expect(screen.getByText('추가로 표시할 유사 민원이 없습니다.')).toBeTruthy();
+    expect(mutations(api)).toHaveLength(0);
+  });
 });
 
 describe('citizen complaint side tools', () => {

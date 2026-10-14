@@ -17,6 +17,12 @@ from app import settings
 from app.chat_intent import ChatIntentBody, PROMPT_VERSION, SYSTEM_PROMPT, classify_chat_intent
 
 CASES = [
+    {'id': 'filter', 'message': '조회하고 싶어', 'expected_intent': 'filter'},
+    {'id': 'filter-departments', 'message': '부서별 상태별로 내가 작성한 민원을 골라 보고 싶어', 'expected_intent': 'filter'},
+    {'id': 'search', 'message': '검색하고 싶어', 'expected_intent': 'search'},
+    {'id': 'search-description', 'message': '보행자 안전과 관련해서 내가 냈던 민원을 찾고 싶어', 'expected_intent': 'search'},
+    {'id': 'search-explicit-id', 'message': '#42 민원을 찾아줘', 'expected_intent': 'list', 'expected_id': 42},
+    {'id': 'search-procedure', 'message': '작성한 민원을 검색하는 방법이 궁금해요', 'expected_intent': 'answer'},
     {'id': 'create', 'message': '내가 민원을 작성하고 싶어', 'expected_intent': 'create'},
     {'id': 'list', 'message': '내가 쓴 민원을 확인하고 싶어', 'expected_intent': 'list'},
     {'id': 'edit-explicit', 'message': '#42 민원을 수정하고 싶어', 'expected_intent': 'edit', 'expected_id': 42},

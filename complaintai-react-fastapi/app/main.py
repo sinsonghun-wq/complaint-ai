@@ -18,7 +18,7 @@ from typing import Annotated, Any
 import pandas as pd
 import psycopg
 from openpyxl import load_workbook
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,6 +31,7 @@ from .security import actor_from_auth, current_account, issue_token, password_ha
 from .worker_manager import ensure_csv_worker
 from .rag_api import router as rag_router
 from .rag_schema import ensure_rag_schema
+from .complaint_search import filter_clause
 from .settings import CSV_LLM_CONFIDENCE_THRESHOLD, CSV_MAX_UPLOAD_BYTES, CSV_RULE_OTHER_MIN_CONTENT_CHARS, DOCUMENT_MAX_UPLOAD_BYTES, FILE_STORAGE_DIR, IMPORT_PROGRESS_ROWS, LLM_IMPORT_CONCURRENCY, LLM_IMPORT_ENABLED, MAX_BATCH_SIZE, TESSDATA_DIR, TESSERACT_CMD, WEB_ORIGINS
 
 app = FastAPI(title="ComplaintAI FastAPI", version="1.0.0")
@@ -617,7 +618,7 @@ def counts(actor: Annotated[dict, Depends(actor_from_auth)]):
 
 
 @app.get("/api/complaints")
-def complaints(deleted: bool = False, category: str | None = None, limit: int = 100, offset: int = 0, source: str = "all", actor: dict = Depends(actor_from_auth)):
+def complaints(request: Request, deleted: bool = False, category: str | None = None, limit: int = 100, offset: int = 0, source: str = "all", departments: Annotated[list[str] | None, Query()] = None, view_status: str | None = None, actor: dict = Depends(actor_from_auth)):
     limit = max(1, min(limit, 100)); offset = max(offset, 0)
     category = category or None
     if actor["role"] == "admin": clause, scope = "TRUE", []
@@ -632,7 +633,18 @@ def complaints(deleted: bool = False, category: str | None = None, limit: int = 
         where += " AND NULLIF(BTRIM(source_file), '') IS NOT NULL"
     if actor["role"] == "user":
         where += " AND NOT (complaint_status='취소' AND cancelled_by_role IS NOT DISTINCT FROM 'user')"
-    params: list[Any] = [*scope, category, category, limit, offset]
+    filter_params = []
+    if departments is not None or view_status is not None:
+        require_user(actor)
+        if not departments or not view_status:
+            raise HTTPException(400, '부서와 민원 상태를 모두 선택해 주세요.')
+        if len(request.query_params.getlist('view_status')) != 1:
+            raise HTTPException(400, '민원 상태는 하나만 선택할 수 있습니다.')
+        if deleted or category:
+            raise HTTPException(400, '조건 조회는 부서와 민원 상태 필터를 이용해 주세요.')
+        extra, filter_params = filter_clause(departments, view_status)
+        where += extra
+    params: list[Any] = [*filter_params, *scope, category, category, limit, offset]
     response_filter = "" if actor["role"] == "admin" else " AND r.response_state='sent'"
     sql = f"""SELECT id,title,content,summary,category,analysis_state,complaint_status,source_file,source_row,processing_mode,llm_model,embedding_model,created_at,deleted_at,cancelled_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
         (NULLIF(BTRIM(source_file), '') IS NULL) AS submitted_by_user,
@@ -646,7 +658,7 @@ def complaints(deleted: bool = False, category: str | None = None, limit: int = 
         for row in rows:
             row["can_manage"] = row["category"] in manageable
             hide_cancelled_content(row)
-    total = fetch_one(f"SELECT COUNT(*)::int count FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s)", [*scope, category, category])
+    total = fetch_one(f"SELECT COUNT(*)::int count FROM complaints WHERE {where} AND {clause} AND (%s::text IS NULL OR category=%s)", [*filter_params, *scope, category, category])
     return {"complaints": rows, "total": total["count"]}
 
 
