@@ -566,8 +566,12 @@ async def chatAI(chatBody: ChatRequestBody, actor: Annotated[dict, Depends(actor
 
 
 # 청킹 단위 설정 (예: 한 청크당 묶을 CSV 행 개수.)
-CHUNK_ROW_SIZE = 50000
+#csv의 경우 각 줄 사이에는 맥락이 없으므로 csv를 잘게 쪼갰을 때 성능 저하는 없다고 생각하고
+#각 부서 csv 내부에서 다른 부서와 관련된 내용도 존재할 수 있기 때문에 적당히 작은 값으로 청킹을 시도
+#값이 크면 context window를 벗어날 위험이 매우 높음
+CHUNK_ROW_SIZE = 5
 
+#7분야 csv 전용 파싱툴 (pdf 등은 새로 제작 필요)
 @router.post("/documents", status_code=201)
 async def create_department_document(
     file: UploadFile = File(...),
@@ -659,14 +663,15 @@ async def create_department_document(
                     answer = row[7]
                     
                     # 한 줄의 포맷팅
-                    row_text = f"title:{title} | question:{question} | answer: {answer}"
+                    row_text = f"[title:{title} | question:{question} | answer: {answer}]"
                     chunk_buffer.append(row_text)
                     
-                    # 설정한 청크 사이즈(예: 50줄)에 도달하면 DB에 저장 후 버퍼 비우기
+                    # 설정한 청크 사이즈에 도달하면 DB에 저장 후 버퍼 비우기
                     if len(chunk_buffer) >= CHUNK_ROW_SIZE:
                         saved_count += await flush_chunk(chunk_buffer, version)
                         chunk_buffer.clear()
                         version += 1
+                        await asyncio.sleep(0.05)
                 
                 # 마지막에 남은 잔여 행 처리
                 if chunk_buffer:
@@ -675,7 +680,7 @@ async def create_department_document(
             conn.commit()
 
     return {
-        "message": "대용량 문서가 의미 단위로 청킹되어 성공적으로 저장되었습니다.",
+        "message": "대용량 문서가 청킹되어 성공적으로 저장되었습니다.",
         "document_id": document_id,
         "total_versions": saved_count
     }

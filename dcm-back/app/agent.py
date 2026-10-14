@@ -16,13 +16,27 @@ from .ai import embeddingForSelect
 from .db import fetch_all
 from langgraph.checkpoint.memory import MemorySaver
 
-ROW_LIMIT = 5
+ROW_LIMIT = 2
 
 # --- 툴 정의 ---
 # 도구 설명(LLM 이 읽는 문장)은 prompts.TOOL_DESCRIPTIONS 에서 관리합니다.
 # LangChain 은 함수 docstring 을 도구 설명으로 쓰므로, 설명을 넣은 뒤에 tool() 로 감쌉니다.
-async def aiFAQ() -> dict:
-    return {"code": 0, "result": []}
+async def aiFAQ(content: str, is_described: bool) -> dict:
+    rows = []
+    vector = await embeddingForSelect(content) if is_described  else None
+    if vector:
+        rows = fetch_all(
+            f"""
+                SELECT SUBSTRING(content, 1, 30000) AS content
+                FROM department_documents 
+                WHERE deleted_at IS NULL 
+                ORDER BY embedding <=> %s::vector 
+                LIMIT {ROW_LIMIT};
+            """,
+            (str(vector),)
+        )
+
+    return {"code": 0, "result": rows}
 
 def insertRequestT(title: str, content: str) -> dict:
     return {"code": 1, "result": [{"title": title, "content": content}]}
@@ -121,13 +135,16 @@ async def llm_worker(llm, tools_dict):
                         if "code" in data:
                             final_code = data["code"]
                         if "result" in data and data["result"]:
-                            final_result_list = data["result"]
+                                final_result_list = data["result"]
                         if "message" in data and data["message"]:
                             tool_message = data["message"]
 
             if tool_message and not final_message:
                 final_message = tool_message
 
+             #aiFAQ의 경우 agent가 반환값을 볼 필요는 있지만, 유저한테까지 갈 필요는 없으므로 필터링
+            if final_code ==0:
+                final_result_list =[]
             final_response = ChatResponseBody(
                 code=final_code,
                 message=final_message,
@@ -189,7 +206,7 @@ async def lifespan(app: FastAPI):
     # 챗봇 모델 - .env 의 LLM_BACKEND 에 따라 ChatOllama 또는 ChatOpenAI(llama-server + 어댑터)
     # (Ollama 일 때 num_ctx 를 민원 분석과 같게 맞추는 것도 llm.make_chat_model 안에서 합니다)
     await llm_backend.check_backend()
-    llm = llm_backend.make_chat_model(llm_backend.TASK_CHAT, temperature=0.1)
+    llm = llm_backend.make_chat_model(llm_backend.TASK_CHAT, temperature=0.2)
 
     # 백그라운드 워커에 llm과 tools_dict 전달
     worker_task = asyncio.create_task(llm_worker(llm, tools_dict))
