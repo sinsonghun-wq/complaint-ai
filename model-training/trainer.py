@@ -279,6 +279,22 @@ def build_eval_sets(val_samples: list[Sample], batch_size: int, per_task: bool =
     return sets
 
 
+def _early_stopping_on_all_set(base):
+    """
+    검증 셋이 여러 개면(전체 + 과제별) transformers 가 셋마다 on_evaluate 를 따로 부릅니다.
+    기본 EarlyStoppingCallback 은 과제별 셋 결과에 eval_all_loss 가 없다며 매번
+    'did not find eval_all_loss so early stopping is disabled' 경고를 남기고 그 호출을 건너뜁니다. (실제로 꺼지지는 않음)
+    전체 셋(BEST_METRIC 이 있는 결과)일 때만 검사하도록 해서 경고 없이 같은 동작을 합니다.
+    """
+    class AllSetEarlyStopping(base):
+        def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+            if not metrics or BEST_METRIC not in metrics:
+                return control
+            return super().on_evaluate(args, state, control, metrics=metrics, **kwargs)
+
+    return AllSetEarlyStopping
+
+
 def build_trainer(model, tokenizer, train_samples: list[Sample], val_samples: list[Sample], cfg: TrainConfig,
                   checkpoint_dir: str | Path, extra_callbacks: list | None = None, per_task_eval: bool = True):
     """
@@ -320,7 +336,7 @@ def build_trainer(model, tokenizer, train_samples: list[Sample], val_samples: li
         args = TrainingArguments(warmup_steps=cfg.warmup_ratio, **kwargs)   # 최신 transformers 는 비율을 warmup_steps 로 받음
     callbacks = []
     if cfg.early_stopping_patience > 0:
-        callbacks.append(EarlyStoppingCallback(early_stopping_patience=cfg.early_stopping_patience))
+        callbacks.append(_early_stopping_on_all_set(EarlyStoppingCallback)(early_stopping_patience=cfg.early_stopping_patience))
     callbacks.extend(extra_callbacks or [])
     pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
     trainer = _trainer_class()(
@@ -402,7 +418,8 @@ def save_run(model, tokenizer, run_dir: str | Path, info: dict) -> Path:
     run_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(str(run_dir))
     tokenizer.save_pretrained(str(run_dir))
-    base = {"created_at": now_kst(), "base_model": common.BASE_MODEL, "prompt_version": prompts.PROMPT_VERSION,
+    base = {"created_at": now_kst(), "base_model": common.BASE_MODEL, "prompt_version": prompts.prompt_version(),
+            "analysis_prompt_style": prompts.analysis_prompt_style(),
             "enable_thinking": common.ENABLE_THINKING}
     base.update(info)
     (run_dir / "run_info.json").write_text(json.dumps(base, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
