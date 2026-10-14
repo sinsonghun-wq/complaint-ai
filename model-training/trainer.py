@@ -260,14 +260,39 @@ def _trainer_class():
     return AnswerOnlyTrainer
 
 
+VAL_ALL = "all"                                    # 전체 검증 셋 이름 -> 로그 키 eval_all_loss
+VAL_TASKS = ("chat_call", "chat_reply", "analysis")   # 과제별 검증 셋 -> eval_<과제>_loss
+BEST_METRIC = f"eval_{VAL_ALL}_loss"               # best 체크포인트·early stopping 기준 (예전 eval_loss 와 같은 값)
+
+
+def build_eval_sets(val_samples: list[Sample], batch_size: int, per_task: bool = True) -> dict[str, "SampleDataset"]:
+    """
+    검증 셋 묶음. 'all' = 전체(예전 eval_loss 와 같은 값), 그 밖에 과제별 셋.
+    전체 val loss 는 쉬운 챗봇 샘플이 대부분이라, 분석 쪽 과적합이 묻히지 않도록 과제별 loss 를 따로 기록합니다.
+    """
+    sets = {VAL_ALL: SampleDataset(make_batches(val_samples, batch_size, shuffle=False))}
+    if per_task:
+        for task in VAL_TASKS:
+            sub = [s for s in val_samples if s.task == task]
+            if sub:
+                sets[task] = SampleDataset(make_batches(sub, batch_size, shuffle=False))
+    return sets
+
+
 def build_trainer(model, tokenizer, train_samples: list[Sample], val_samples: list[Sample], cfg: TrainConfig,
-                  checkpoint_dir: str | Path, extra_callbacks: list | None = None):
-    """extra_callbacks: 추가 TrainerCallback (예: plots.LiveLossPlot - 학습 중 loss 그래프 실시간 갱신)."""
+                  checkpoint_dir: str | Path, extra_callbacks: list | None = None, per_task_eval: bool = True):
+    """
+    extra_callbacks: 추가 TrainerCallback (예: plots.LiveLossPlot - 학습 중 loss 그래프 실시간 갱신).
+    per_task_eval : True 면 검증 때마다 전체 + 과제별(chat_call / chat_reply / analysis) loss 를 따로 기록합니다.
+                    로그 키는 eval_all_loss, eval_chat_call_loss, eval_chat_reply_loss, eval_analysis_loss.
+                    best 체크포인트·early stopping 은 지금처럼 전체(eval_all_loss) 기준. 검증 시간은 약 2배.
+    """
     import torch
     from transformers import EarlyStoppingCallback, TrainingArguments
 
     train_batches = make_batches(train_samples, cfg.batch_size, seed=cfg.seed, shuffle=True)
-    val_batches = make_batches(val_samples, cfg.batch_size, shuffle=False)
+    eval_sets = build_eval_sets(val_samples, cfg.batch_size, per_task=per_task_eval)
+    val_batches = eval_sets[VAL_ALL].batches
     steps_per_epoch = max(1, math.ceil(len(train_batches) / cfg.grad_accum))
     total_steps = cfg.max_steps if cfg.max_steps > 0 else math.ceil(steps_per_epoch * cfg.epochs)
     eval_steps = max(1, min(total_steps, steps_per_epoch) // max(cfg.evals_per_epoch, 1))
@@ -282,7 +307,7 @@ def build_trainer(model, tokenizer, train_samples: list[Sample], val_samples: li
         logging_steps=cfg.logging_steps,
         eval_strategy="steps", eval_steps=eval_steps,
         save_strategy="steps", save_steps=eval_steps, save_total_limit=cfg.save_total_limit,
-        load_best_model_at_end=True, metric_for_best_model="eval_loss", greater_is_better=False,
+        load_best_model_at_end=True, metric_for_best_model=BEST_METRIC, greater_is_better=False,
         bf16=bf16, fp16=not bf16 and torch.cuda.is_available(),
         optim="paged_adamw_8bit",
         gradient_checkpointing=False,     # attach_lora 에서 켬
@@ -300,11 +325,12 @@ def build_trainer(model, tokenizer, train_samples: list[Sample], val_samples: li
     pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
     trainer = _trainer_class()(
         model=model, args=args,
-        train_dataset=SampleDataset(train_batches), eval_dataset=SampleDataset(val_batches),
+        train_dataset=SampleDataset(train_batches), eval_dataset=eval_sets,
         data_collator=make_collator(pad_id), callbacks=callbacks or None,
     )
     plan = {"train_batches": len(train_batches), "steps_per_epoch": steps_per_epoch, "total_steps": total_steps,
-            "eval_steps": eval_steps, "effective_batch": cfg.batch_size * cfg.grad_accum, "bf16": bf16}
+            "eval_steps": eval_steps, "effective_batch": cfg.batch_size * cfg.grad_accum, "bf16": bf16,
+            "val_sets": {name: sum(len(b) for b in ds.batches) for name, ds in eval_sets.items()}}
     return trainer, plan
 
 
@@ -320,15 +346,45 @@ def finish_training(trainer):
     return model
 
 
+def eval_losses(logs: dict) -> dict[str, float]:
+    """
+    로그 한 줄에서 검증 loss 를 {셋 이름: 값} 으로. 'eval_all_loss' -> {'all': ...}, 'eval_analysis_loss' -> {'analysis': ...}.
+    예전처럼 셋이 하나라 'eval_loss' 로 찍히면 'all' 로 봅니다.
+    """
+    out = {}
+    for key, value in logs.items():
+        if key == "eval_loss":
+            out[VAL_ALL] = float(value)
+        elif key.startswith("eval_") and key.endswith("_loss"):
+            out[key[len("eval_"):-len("_loss")]] = float(value)
+    return out
+
+
 def loss_history(trainer) -> dict[str, list]:
-    """그래프용 (step, loss) 목록."""
-    train, val = [], []
+    """
+    그래프·기록용 (step, loss) 목록.
+    'train', 'val'(= 전체 검증), 그리고 과제별 검증 'val_chat_call' / 'val_chat_reply' / 'val_analysis'.
+    """
+    hist: dict[str, list] = {"train": [], "val": []}
     for row in trainer.state.log_history:
         if "loss" in row:
-            train.append((row["step"], row["loss"]))
-        if "eval_loss" in row:
-            val.append((row["step"], row["eval_loss"]))
-    return {"train": train, "val": val}
+            hist["train"].append((row["step"], row["loss"]))
+        for name, value in eval_losses(row).items():
+            hist.setdefault("val" if name == VAL_ALL else f"val_{name}", []).append((row["step"], value))
+    return hist
+
+
+def val_loss_table(trainer) -> list[dict]:
+    """
+    검증 때마다의 과제별 loss 표 (노트북에서 pd.DataFrame 으로 표시).
+    분석(analysis) loss 가 전체보다 먼저 올라가기 시작하면, 반복해 넣은 분석 데이터를 외우기 시작한 것입니다.
+    """
+    rows: dict[int, dict] = {}
+    for row in trainer.state.log_history:
+        losses = eval_losses(row)
+        if losses:
+            rows.setdefault(row["step"], {"step": row["step"]}).update({k: round(v, 5) for k, v in losses.items()})
+    return [rows[s] for s in sorted(rows)]
 
 
 # =============================================================================

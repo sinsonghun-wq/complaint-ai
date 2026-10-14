@@ -3,6 +3,7 @@
 
   - LiveLossPlot : transformers TrainerCallback. 로그가 찍힐 때마다(logging_steps 마다) train / val loss 그래프를
                    같은 자리에서 다시 그립니다. 학습이 끝날 때까지 기다리지 않고 진행을 볼 수 있습니다.
+                   검증 셋이 과제별로 나뉘어 있으면(trainer.build_trainer 의 per_task_eval) 세 번째 칸에 과제별 val loss 를 그립니다.
   - plot_comparison : evaluate.compare_table() 결과를 과제(챗봇·분석)별 가로 막대그래프로 그립니다.
 
 Colab 기본 글꼴에는 한글이 없어 지표 이름이 네모로 깨집니다. 노트북 2번 셀이 fonts-nanum 을 설치하고,
@@ -16,6 +17,8 @@ from pathlib import Path
 
 TRAIN_COLOR = "#2563eb"
 VAL_COLOR = "#ea580c"
+TASK_COLORS = {"chat_call": "#0891b2", "chat_reply": "#7c3aed", "analysis": "#dc2626"}
+TASK_LABELS = {"chat_call": "챗봇 도구 호출", "chat_reply": "챗봇 안내 문구", "analysis": "민원 분석"}
 BEFORE_COLOR = "#9ca3af"
 AFTER_COLOR = "#2563eb"
 _font_ready = False
@@ -73,14 +76,17 @@ class LiveLossPlot(_callback_base()):
     trainer.build_trainer(..., extra_callbacks=[LiveLossPlot()]) 로 붙입니다.
     on_log 가 불릴 때마다 (= logging_steps 마다, 검증 직후에도) 그래프를 갱신합니다.
       왼쪽: train loss (옅은 선 = 원래 값, 진한 선 = 이동 평균)
-      오른쪽: val loss (★ = 지금까지 가장 낮은 값 = 학습 끝에 되돌아갈 체크포인트)
+      가운데: 전체 val loss (★ = 지금까지 가장 낮은 값 = 학습 끝에 되돌아갈 체크포인트)
+      오른쪽: 과제별 val loss (로그 눈금) - 전체 val loss 는 쉬운 챗봇 샘플이 대부분이라
+              분석 loss 가 따로 올라가도 가운데 그래프에는 잘 안 보입니다. 이 칸에서 확인합니다.
     """
 
     def __init__(self, title: str = "", save_path: str | Path | None = None):
         self.title = title
         self.save_path = Path(save_path) if save_path else None
         self.train: list[tuple[int, float]] = []
-        self.val: list[tuple[int, float]] = []
+        self.val: list[tuple[int, float]] = []                    # 전체 검증
+        self.val_tasks: dict[str, list[tuple[int, float]]] = {}   # 과제별 검증
         self.fig = None
         self._handle = None
         self._started = None
@@ -90,7 +96,7 @@ class LiveLossPlot(_callback_base()):
     def on_train_begin(self, args, state, control, **kwargs):
         setup_korean_font()
         from matplotlib.figure import Figure   # pyplot 을 쓰지 않아 셀 끝에 그래프가 한 번 더 찍히지 않음
-        self.fig = Figure(figsize=(12, 3.8), dpi=90)
+        self.fig = Figure(figsize=(16, 3.8), dpi=90)
         self._started = time.time()
         self._max_steps = state.max_steps
         self._draw(state)
@@ -101,12 +107,18 @@ class LiveLossPlot(_callback_base()):
             self._handle = None
 
     def on_log(self, args, state, control, logs=None, **kwargs):
+        from trainer import VAL_ALL, eval_losses
+
         logs = logs or {}
         if "loss" in logs:
             self.train.append((state.global_step, float(logs["loss"])))
-        if "eval_loss" in logs:
-            self.val.append((state.global_step, float(logs["eval_loss"])))
-        if "loss" in logs or "eval_loss" in logs:
+        losses = eval_losses(logs)   # 검증 셋이 여러 개면 셋마다 on_log 가 따로 불림
+        for name, value in losses.items():
+            if name == VAL_ALL:
+                self.val.append((state.global_step, value))
+            else:
+                self.val_tasks.setdefault(name, []).append((state.global_step, value))
+        if "loss" in logs or losses:
             self._refresh(state)
 
     def on_train_end(self, args, state, control, **kwargs):
@@ -127,7 +139,7 @@ class LiveLossPlot(_callback_base()):
     def _draw(self, state, final: bool = False):
         fig = self.fig
         fig.clear()
-        ax_t, ax_v = fig.subplots(1, 2)
+        ax_t, ax_v, ax_k = fig.subplots(1, 3)
         step, total = state.global_step, self._max_steps or state.max_steps
         elapsed = time.time() - (self._started or time.time())
         eta = elapsed / step * (total - step) if step and total > step else 0
@@ -157,7 +169,22 @@ class LiveLossPlot(_callback_base()):
         else:
             ax_v.set_title("val loss (첫 검증 대기 중)", fontsize=10)
 
-        for ax in (ax_t, ax_v):
+        # 과제별 val
+        if self.val_tasks:
+            last = []
+            for name, pts in self.val_tasks.items():
+                xs, ys = zip(*pts)
+                ax_k.plot(xs, ys, "o-", color=TASK_COLORS.get(name), linewidth=1.6, markersize=3,
+                          label=f"{TASK_LABELS.get(name, name)} {ys[-1]:.4f}")
+                last.append(ys[-1])
+            if min(last) > 0:
+                ax_k.set_yscale("log")
+            ax_k.set_title("과제별 val loss (로그 눈금)", fontsize=10)
+            ax_k.legend(loc="best", fontsize=8, framealpha=0.8)
+        else:
+            ax_k.set_title("과제별 val loss (첫 검증 대기 중)", fontsize=10)
+
+        for ax in (ax_t, ax_v, ax_k):
             ax.set_xlabel("step")
             ax.set_ylabel("loss")
             ax.grid(alpha=0.3)
