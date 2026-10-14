@@ -578,7 +578,6 @@ async def create_department_document(
     file: UploadFile = File(...),
     actor: Annotated[dict, Depends(actor_from_auth)] = None
 ):
-    num =0
     require_department(actor)
     
     # 1. 파일 형식 검증 및 텍스트 디코딩
@@ -644,9 +643,6 @@ async def create_department_document(
         embeddings = response.json().get("embeddings", [])
         if not embeddings:
             return None
-        else:
-            num +=1
-            logger.info(f"{num}개의 청크 완료")
             
         # 벡터 평균 계산
         vector_dim = len(embeddings[0])
