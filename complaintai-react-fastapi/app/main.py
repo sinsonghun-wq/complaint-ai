@@ -14,6 +14,7 @@ from .routers import auth, complaints
 auth_header = APIKeyHeader(name="Authorization", auto_error=False)
 app = FastAPI(title="ComplaintAI FastAPI", version="1.0.0", dependencies=[Depends(auth_header)], lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=WEB_ORIGINS if WEB_ORIGINS != ["*"] else ["*"], allow_credentials=WEB_ORIGINS != ["*"], allow_methods=["*"], allow_headers=["*"])
+app.include_router(rag_router)
 
 FILE_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 

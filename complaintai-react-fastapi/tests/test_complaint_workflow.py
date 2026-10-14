@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-from app.ai import fallback
+from app.ai import CATEGORIES, fallback
 from app.db import connection, fetch_one
 from app.main import app, classify_submission
 from app.security import issue_token, password_hash
@@ -274,6 +274,20 @@ class ComplaintWorkflowTests(unittest.TestCase):
         self.assertEqual(self.request("POST", f"/api/department/complaints/{identifier}/start", self.user).status_code, 403)
         self.assertEqual(self.request("GET", f"/api/complaints/{identifier}", self.other_admin).status_code, 200)
 
+    def test_all_seven_admins_can_only_manage_own_department(self):
+        identifier = self.complaint()
+        admins = [self.account('admin', category) for category in CATEGORIES]
+        for index, category in enumerate(CATEGORIES):
+            admin = admins[index]
+            with connection() as conn:
+                conn.execute("UPDATE complaints SET category=%s,complaint_status='접수' WHERE id=%s", (category, identifier))
+            self.assertEqual(self.request('GET', f'/api/complaints/{identifier}', admin).status_code, 200)
+            result = self.request('POST', f'/api/department/complaints/{identifier}/start', admin)
+            self.assertEqual(result.status_code, 200)
+            for other in admins:
+                if other != admin:
+                    self.assertEqual(self.request('POST', f'/api/department/complaints/{identifier}/start', other).status_code, 404)
+
     def test_draft_delete_keeps_in_progress(self):
         identifier = self.complaint()
         base = f"/api/department/complaints/{identifier}"
@@ -316,6 +330,80 @@ class ComplaintWorkflowTests(unittest.TestCase):
         row = fetch_one("SELECT complaint_status FROM complaints WHERE id=%s", (identifier,))
         count = fetch_one("SELECT count(*) count FROM complaint_responses WHERE complaint_id=%s AND response_state='sent'", (identifier,))["count"]
         self.assertEqual(count, int(row["complaint_status"] == "완료"))
+
+    def test_send_commits_current_edited_text_not_previous_draft(self):
+        identifier = self.complaint()
+        base = f'/api/department/complaints/{identifier}'
+        self.request('POST', base + '/responses', self.admin, json={'content': '이전 초안입니다.'})
+        result = self.request('POST', base + '/responses/send', self.admin, json={'content': '  수정한 최종 답변입니다.  '})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()['response']['content'], '수정한 최종 답변입니다.')
+        self.assertEqual(result.json()['response']['response_state'], 'sent')
+        own = self.request('GET', f'/api/complaints/{identifier}').json()['complaint']
+        self.assertEqual(own['latest_response'], '수정한 최종 답변입니다.')
+        self.assertEqual(own['complaint_status'], '완료')
+        self.assertEqual(self.request('POST', base + '/responses/send', self.admin, json={'content': '다시 전송'}).status_code, 409)
+
+    def test_invalid_final_answer_does_not_send_existing_draft(self):
+        identifier = self.complaint()
+        base = f'/api/department/complaints/{identifier}'
+        self.request('POST', base + '/responses', self.admin, json={'content': '전송되지 않은 초안'})
+        for content in ('   ', 'a', 'x' * 5001):
+            self.assertEqual(self.request('POST', base + '/responses/send', self.admin, json={'content': content}).status_code, 400)
+        self.assertEqual(fetch_one('SELECT complaint_status FROM complaints WHERE id=%s', (identifier,))['complaint_status'], '진행중')
+        self.assertEqual(fetch_one("SELECT count(*) count FROM complaint_responses WHERE complaint_id=%s AND response_state='sent'", (identifier,))['count'], 0)
+
+    def test_cancelled_trash_can_be_restored_by_its_department(self):
+        identifier = self.complaint()
+        route = f'/api/complaints/{identifier}'
+        self.request('DELETE', route)
+        self.assertEqual(self.request('POST', route + '/restore').status_code, 403)
+        self.assertEqual(self.request('POST', route + '/restore', self.other_admin).status_code, 404)
+        result = self.request('POST', route + '/restore', self.admin)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()['complaint']['complaint_status'], '접수')
+        row = fetch_one('SELECT deleted_at,cancelled_at,cancelled_by_role,cancellation_reason,analysis_state FROM complaints WHERE id=%s', (identifier,))
+        self.assertEqual(row, {'deleted_at': None, 'cancelled_at': None, 'cancelled_by_role': None, 'cancellation_reason': None, 'analysis_state': 'completed'})
+        self.assertTrue(any(item['id'] == identifier for item in self.request('GET', '/api/complaints').json()['complaints']))
+
+    def test_restore_preserves_sent_answer_and_completed_state(self):
+        identifier = self.complaint(); self.complete(identifier)
+        with connection() as conn:
+            conn.execute("UPDATE complaints SET deleted_at=NOW(),cancelled_at=NOW(),cancelled_by_role='admin',complaint_status='취소',cancellation_reason='테스트 보관' WHERE id=%s", (identifier,))
+        result = self.request('POST', f'/api/complaints/{identifier}/restore', self.admin)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()['complaint']['complaint_status'], '완료')
+        own = self.request('GET', f'/api/complaints/{identifier}').json()['complaint']
+        self.assertEqual(own['latest_response'], '보수를 완료했습니다.')
+        self.assertEqual(self.request('POST', f'/api/department/complaints/{identifier}/responses/send', self.admin).status_code, 409)
+
+    def test_restore_requeues_missing_analysis_and_rejects_duplicate_active_content(self):
+        identifier = self.complaint()
+        self.request('DELETE', f'/api/complaints/{identifier}')
+        with connection() as conn:
+            conn.execute("UPDATE complaints SET summary='' WHERE id=%s", (identifier,))
+        with patch('app.main.BackgroundTasks.add_task') as enqueue:
+            result = self.request('POST', f'/api/complaints/{identifier}/restore', self.admin)
+        self.assertEqual(result.json()['complaint']['analysis_state'], 'pending')
+        self.assertEqual(enqueue.call_args.args[0], classify_submission)
+        self.request('DELETE', f'/api/complaints/{identifier}')
+        another = self.complaint()
+        with connection() as conn:
+            conn.execute("UPDATE complaints SET content_fingerprint='abc' WHERE id=ANY(%s)", ([identifier, another],))
+        self.assertEqual(self.request('POST', f'/api/complaints/{identifier}/restore', self.admin).status_code, 409)
+
+    def test_individual_trash_purge_checks_password_role_and_department(self):
+        identifier = self.complaint()
+        route = f'/api/complaints/{identifier}/permanent'
+        password = {'password': 'WorkflowTest!2026'}
+        self.assertEqual(self.request('DELETE', route, self.admin, json=password).status_code, 404)
+        self.request('DELETE', f'/api/complaints/{identifier}')
+        self.assertEqual(self.request('DELETE', route, json=password).status_code, 403)
+        self.assertEqual(self.request('DELETE', route, self.other_admin, json=password).status_code, 404)
+        self.assertEqual(self.request('DELETE', route, self.admin, json={'password': 'wrong-password'}).status_code, 403)
+        self.assertIsNotNone(fetch_one('SELECT id FROM complaints WHERE id=%s', (identifier,)))
+        self.assertEqual(self.request('DELETE', route, self.admin, json=password).json()['permanently_deleted'], 1)
+        self.assertIsNone(fetch_one('SELECT id FROM complaints WHERE id=%s', (identifier,)))
 
 
 if __name__ == "__main__":

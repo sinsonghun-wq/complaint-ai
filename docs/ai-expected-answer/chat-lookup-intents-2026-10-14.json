@@ -1,0 +1,498 @@
+{
+  "purpose": "actual_model_intent_routing_evaluation_only",
+  "complaint_database_writes": false,
+  "rounds": [
+    {
+      "label": "lookup-initial",
+      "started_at": "2026-10-14T00:32:25.513390+00:00",
+      "model": "qwen3.5:4b",
+      "prompt_version": "complaintai-chat-intent-ko-v3-search-filter",
+      "prompt_sha256": "60e5e497f98a4844ed6a5a70fd3ad86a1d96829df4fd8b05914a934988dabb4d",
+      "temperature": 0,
+      "think": false,
+      "num_ctx": 8192,
+      "cases": [
+        {
+          "id": "filter",
+          "message": "조회하고 싶어",
+          "expected_intent": "filter",
+          "prediction": {
+            "intent": "filter",
+            "complaint_id": null,
+            "draft": null,
+            "message": "민원 조회 조건을 선택할 수 있도록 도와드리겠습니다. 부서와 민원 상태를 선택해 주세요."
+          },
+          "passed": true,
+          "seconds": 31.24
+        },
+        {
+          "id": "filter-departments",
+          "message": "부서별 상태별로 내가 작성한 민원을 골라 보고 싶어",
+          "expected_intent": "filter",
+          "prediction": {
+            "intent": "filter",
+            "complaint_id": null,
+            "draft": null,
+            "message": "민원 조회 조건을 선택할 수 있도록 도와드리겠습니다. 부서와 민원 상태를 선택해 주세요."
+          },
+          "passed": true,
+          "seconds": 9.84
+        },
+        {
+          "id": "search",
+          "message": "검색하고 싶어",
+          "expected_intent": "search",
+          "prediction": {
+            "intent": "search",
+            "complaint_id": null,
+            "draft": null,
+            "message": "내 민원 검색을 준비했습니다. 다음 메시지에 찾고 싶은 민원 내용을 입력해 주세요."
+          },
+          "passed": true,
+          "seconds": 9.06
+        },
+        {
+          "id": "search-description",
+          "message": "보행자 안전과 관련해서 내가 냈던 민원을 찾고 싶어",
+          "expected_intent": "search",
+          "prediction": {
+            "intent": "search",
+            "complaint_id": null,
+            "draft": null,
+            "message": "내 민원 검색을 준비했습니다. 다음 메시지에 찾고 싶은 민원 내용을 입력해 주세요."
+          },
+          "passed": true,
+          "seconds": 9.1
+        },
+        {
+          "id": "search-explicit-id",
+          "message": "#42 민원을 찾아줘",
+          "expected_intent": "list",
+          "expected_id": 42,
+          "prediction": {
+            "intent": "search",
+            "complaint_id": null,
+            "draft": null,
+            "message": "내 민원 검색을 준비했습니다. 다음 메시지에 찾고 싶은 민원 내용을 입력해 주세요."
+          },
+          "passed": false,
+          "seconds": 8.7
+        },
+        {
+          "id": "search-procedure",
+          "message": "작성한 민원을 검색하는 방법이 궁금해요",
+          "expected_intent": "answer",
+          "prediction": {
+            "intent": "search",
+            "complaint_id": null,
+            "draft": null,
+            "message": "내 민원 검색을 준비했습니다. 다음 메시지에 찾고 싶은 민원 내용을 입력해 주세요."
+          },
+          "passed": false,
+          "seconds": 8.83
+        },
+        {
+          "id": "create",
+          "message": "내가 민원을 작성하고 싶어",
+          "expected_intent": "create",
+          "prediction": {
+            "intent": "create",
+            "complaint_id": null,
+            "draft": null,
+            "message": "오른쪽에 새 민원 작성 도구를 열었습니다. 내용을 확인하고 직접 등록할 수 있습니다."
+          },
+          "passed": true,
+          "seconds": 9.01
+        },
+        {
+          "id": "list",
+          "message": "내가 쓴 민원을 확인하고 싶어",
+          "expected_intent": "list",
+          "prediction": {
+            "intent": "list",
+            "complaint_id": null,
+            "draft": null,
+            "message": "오른쪽에 작성한 민원 확인 도구를 열었습니다. 민원을 선택해 내용을 확인할 수 있습니다."
+          },
+          "passed": true,
+          "seconds": 8.86
+        },
+        {
+          "id": "edit-explicit",
+          "message": "#42 민원을 수정하고 싶어",
+          "expected_intent": "edit",
+          "expected_id": 42,
+          "prediction": {
+            "intent": "edit",
+            "complaint_id": 42,
+            "draft": null,
+            "message": "오른쪽에 민원 수정 도구를 열었습니다. 민원을 선택하고 변경할 내용을 확인해 주세요."
+          },
+          "passed": true,
+          "seconds": 9.07
+        },
+        {
+          "id": "delete-explicit",
+          "message": "42번 민원을 삭제하고 싶어",
+          "expected_intent": "delete",
+          "expected_id": 42,
+          "prediction": {
+            "intent": "delete",
+            "complaint_id": 42,
+            "draft": null,
+            "message": "오른쪽에 민원 삭제 도구를 열었습니다. 민원을 선택하고 삭제 여부를 직접 확인해 주세요."
+          },
+          "passed": true,
+          "seconds": 9.16
+        },
+        {
+          "id": "ordinary-question",
+          "message": "아파트 층간소음은 어디에 상담하나요?",
+          "expected_intent": "answer",
+          "prediction": {
+            "intent": "answer",
+            "complaint_id": null,
+            "draft": null,
+            "message": "질문에 맞는 공식 근거를 찾아 답변을 준비하겠습니다."
+          },
+          "passed": true,
+          "seconds": 8.88
+        },
+        {
+          "id": "writing-procedure",
+          "message": "민원은 어떻게 작성하나요?",
+          "expected_intent": "answer",
+          "prediction": {
+            "intent": "answer",
+            "complaint_id": null,
+            "draft": null,
+            "message": "질문에 맞는 공식 근거를 찾아 답변을 준비하겠습니다."
+          },
+          "passed": true,
+          "seconds": 9.04
+        },
+        {
+          "id": "deleting-procedure",
+          "message": "작성한 민원을 삭제하는 방법이 궁금해요",
+          "expected_intent": "answer",
+          "prediction": {
+            "intent": "answer",
+            "complaint_id": null,
+            "draft": null,
+            "message": "질문에 맞는 공식 근거를 찾아 답변을 준비하겠습니다."
+          },
+          "passed": true,
+          "seconds": 9.3
+        },
+        {
+          "id": "negative-delete",
+          "message": "민원을 삭제하지 마",
+          "expected_intent": "answer",
+          "prediction": {
+            "intent": "answer",
+            "complaint_id": null,
+            "draft": null,
+            "message": "질문에 맞는 공식 근거를 찾아 답변을 준비하겠습니다."
+          },
+          "passed": true,
+          "seconds": 7.63
+        },
+        {
+          "id": "mixed-negation",
+          "message": "수정 말고 내가 쓴 민원 목록을 보여줘",
+          "expected_intent": "list",
+          "prediction": {
+            "intent": "list",
+            "complaint_id": null,
+            "draft": null,
+            "message": "오른쪽에 작성한 민원 확인 도구를 열었습니다. 민원을 선택해 내용을 확인할 수 있습니다."
+          },
+          "passed": true,
+          "seconds": 8.71
+        },
+        {
+          "id": "close-tools",
+          "message": "오른쪽 도구창 닫아줘",
+          "expected_intent": "close_tools",
+          "prediction": {
+            "intent": "close_tools",
+            "complaint_id": null,
+            "draft": null,
+            "message": "민원 도구 창을 닫겠습니다. 대화는 계속할 수 있습니다."
+          },
+          "passed": true,
+          "seconds": 9.37
+        },
+        {
+          "id": "context-edit",
+          "message": "이 민원을 수정하고 싶어",
+          "tool_context": {
+            "mode": "list",
+            "complaint_id": 42,
+            "title": "가로등 고장",
+            "content": "집 앞 가로등이 꺼져 있습니다."
+          },
+          "expected_intent": "edit",
+          "expected_id": 42,
+          "prediction": {
+            "intent": "edit",
+            "complaint_id": null,
+            "draft": null,
+            "message": "오른쪽에 민원 수정 도구를 열었습니다. 민원을 선택하고 변경할 내용을 확인해 주세요."
+          },
+          "passed": false,
+          "seconds": 10.37
+        }
+      ],
+      "completed_at": "2026-10-14T00:35:21.695804+00:00",
+      "passed": 14,
+      "total": 17
+    },
+    {
+      "label": "lookup-final-v4",
+      "started_at": "2026-10-14T00:36:56.174834+00:00",
+      "model": "qwen3.5:4b",
+      "prompt_version": "complaintai-chat-intent-ko-v4-search-filter",
+      "prompt_sha256": "88460c85ec02c0a317d3686a2445b691fd71755a5a8dc70dbe85abe88ee8e79e",
+      "temperature": 0,
+      "think": false,
+      "num_ctx": 8192,
+      "cases": [
+        {
+          "id": "filter",
+          "message": "조회하고 싶어",
+          "expected_intent": "filter",
+          "prediction": {
+            "intent": "filter",
+            "complaint_id": null,
+            "draft": null,
+            "message": "민원 조회 조건을 선택할 수 있도록 도와드리겠습니다. 부서와 민원 상태를 선택해 주세요."
+          },
+          "passed": true,
+          "seconds": 11.67
+        },
+        {
+          "id": "filter-departments",
+          "message": "부서별 상태별로 내가 작성한 민원을 골라 보고 싶어",
+          "expected_intent": "filter",
+          "prediction": {
+            "intent": "filter",
+            "complaint_id": null,
+            "draft": null,
+            "message": "민원 조회 조건을 선택할 수 있도록 도와드리겠습니다. 부서와 민원 상태를 선택해 주세요."
+          },
+          "passed": true,
+          "seconds": 10.02
+        },
+        {
+          "id": "search",
+          "message": "검색하고 싶어",
+          "expected_intent": "search",
+          "prediction": {
+            "intent": "search",
+            "complaint_id": null,
+            "draft": null,
+            "message": "내 민원 검색을 준비했습니다. 다음 메시지에 찾고 싶은 민원 내용을 입력해 주세요."
+          },
+          "passed": true,
+          "seconds": 9.16
+        },
+        {
+          "id": "search-description",
+          "message": "보행자 안전과 관련해서 내가 냈던 민원을 찾고 싶어",
+          "expected_intent": "search",
+          "prediction": {
+            "intent": "search",
+            "complaint_id": null,
+            "draft": null,
+            "message": "내 민원 검색을 준비했습니다. 다음 메시지에 찾고 싶은 민원 내용을 입력해 주세요."
+          },
+          "passed": true,
+          "seconds": 9.34
+        },
+        {
+          "id": "search-explicit-id",
+          "message": "#42 민원을 찾아줘",
+          "expected_intent": "list",
+          "expected_id": 42,
+          "prediction": {
+            "intent": "list",
+            "complaint_id": 42,
+            "draft": null,
+            "message": "오른쪽에 작성한 민원 확인 도구를 열었습니다. 민원을 선택해 내용을 확인할 수 있습니다."
+          },
+          "passed": true,
+          "seconds": 9.67
+        },
+        {
+          "id": "search-procedure",
+          "message": "작성한 민원을 검색하는 방법이 궁금해요",
+          "expected_intent": "answer",
+          "prediction": {
+            "intent": "answer",
+            "complaint_id": null,
+            "draft": null,
+            "message": "질문에 맞는 공식 근거를 찾아 답변을 준비하겠습니다."
+          },
+          "passed": true,
+          "seconds": 8.24
+        },
+        {
+          "id": "create",
+          "message": "내가 민원을 작성하고 싶어",
+          "expected_intent": "create",
+          "prediction": {
+            "intent": "create",
+            "complaint_id": null,
+            "draft": null,
+            "message": "오른쪽에 새 민원 작성 도구를 열었습니다. 내용을 확인하고 직접 등록할 수 있습니다."
+          },
+          "passed": true,
+          "seconds": 9.31
+        },
+        {
+          "id": "list",
+          "message": "내가 쓴 민원을 확인하고 싶어",
+          "expected_intent": "list",
+          "prediction": {
+            "intent": "list",
+            "complaint_id": null,
+            "draft": null,
+            "message": "오른쪽에 작성한 민원 확인 도구를 열었습니다. 민원을 선택해 내용을 확인할 수 있습니다."
+          },
+          "passed": true,
+          "seconds": 9.07
+        },
+        {
+          "id": "edit-explicit",
+          "message": "#42 민원을 수정하고 싶어",
+          "expected_intent": "edit",
+          "expected_id": 42,
+          "prediction": {
+            "intent": "edit",
+            "complaint_id": 42,
+            "draft": null,
+            "message": "오른쪽에 민원 수정 도구를 열었습니다. 민원을 선택하고 변경할 내용을 확인해 주세요."
+          },
+          "passed": true,
+          "seconds": 9.58
+        },
+        {
+          "id": "delete-explicit",
+          "message": "42번 민원을 삭제하고 싶어",
+          "expected_intent": "delete",
+          "expected_id": 42,
+          "prediction": {
+            "intent": "delete",
+            "complaint_id": 42,
+            "draft": null,
+            "message": "오른쪽에 민원 삭제 도구를 열었습니다. 민원을 선택하고 삭제 여부를 직접 확인해 주세요."
+          },
+          "passed": true,
+          "seconds": 9.64
+        },
+        {
+          "id": "ordinary-question",
+          "message": "아파트 층간소음은 어디에 상담하나요?",
+          "expected_intent": "answer",
+          "prediction": {
+            "intent": "answer",
+            "complaint_id": null,
+            "draft": null,
+            "message": "질문에 맞는 공식 근거를 찾아 답변을 준비하겠습니다."
+          },
+          "passed": true,
+          "seconds": 9.2
+        },
+        {
+          "id": "writing-procedure",
+          "message": "민원은 어떻게 작성하나요?",
+          "expected_intent": "answer",
+          "prediction": {
+            "intent": "answer",
+            "complaint_id": null,
+            "draft": null,
+            "message": "질문에 맞는 공식 근거를 찾아 답변을 준비하겠습니다."
+          },
+          "passed": true,
+          "seconds": 9.12
+        },
+        {
+          "id": "deleting-procedure",
+          "message": "작성한 민원을 삭제하는 방법이 궁금해요",
+          "expected_intent": "answer",
+          "prediction": {
+            "intent": "answer",
+            "complaint_id": null,
+            "draft": null,
+            "message": "질문에 맞는 공식 근거를 찾아 답변을 준비하겠습니다."
+          },
+          "passed": true,
+          "seconds": 9.25
+        },
+        {
+          "id": "negative-delete",
+          "message": "민원을 삭제하지 마",
+          "expected_intent": "answer",
+          "prediction": {
+            "intent": "answer",
+            "complaint_id": null,
+            "draft": null,
+            "message": "질문에 맞는 공식 근거를 찾아 답변을 준비하겠습니다."
+          },
+          "passed": true,
+          "seconds": 8.05
+        },
+        {
+          "id": "mixed-negation",
+          "message": "수정 말고 내가 쓴 민원 목록을 보여줘",
+          "expected_intent": "list",
+          "prediction": {
+            "intent": "list",
+            "complaint_id": null,
+            "draft": null,
+            "message": "오른쪽에 작성한 민원 확인 도구를 열었습니다. 민원을 선택해 내용을 확인할 수 있습니다."
+          },
+          "passed": true,
+          "seconds": 9.19
+        },
+        {
+          "id": "close-tools",
+          "message": "오른쪽 도구창 닫아줘",
+          "expected_intent": "close_tools",
+          "prediction": {
+            "intent": "close_tools",
+            "complaint_id": null,
+            "draft": null,
+            "message": "민원 도구 창을 닫겠습니다. 대화는 계속할 수 있습니다."
+          },
+          "passed": true,
+          "seconds": 9.38
+        },
+        {
+          "id": "context-edit",
+          "message": "이 민원을 수정하고 싶어",
+          "tool_context": {
+            "mode": "list",
+            "complaint_id": 42,
+            "title": "가로등 고장",
+            "content": "집 앞 가로등이 꺼져 있습니다."
+          },
+          "expected_intent": "edit",
+          "expected_id": 42,
+          "prediction": {
+            "intent": "edit",
+            "complaint_id": 42,
+            "draft": null,
+            "message": "오른쪽에 민원 수정 도구를 열었습니다. 민원을 선택하고 변경할 내용을 확인해 주세요."
+          },
+          "passed": true,
+          "seconds": 10.9
+        }
+      ],
+      "completed_at": "2026-10-14T00:39:36.996305+00:00",
+      "passed": 17,
+      "total": 17
+    }
+  ]
+}

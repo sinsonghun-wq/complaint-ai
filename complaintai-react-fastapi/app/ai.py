@@ -30,7 +30,7 @@ def redact(value: Any) -> str:
     return re.sub(r"\b\d{6}[- ]?[1-4]\d{6}\b", "[개인정보 제외]", text)
 
 
-def fallback(title: str, content: str, reason: str = "LLM을 사용할 수 없어 규칙 기반 처리로 저장했습니다.") -> dict[str, Any]:
+def fallback(title: str, content: str, reason: str | None = None) -> dict[str, Any]:
     content = redact(content)
     sentences = re.findall(r"[^.!?。]+[.!?。]?", content) or [content]
     summary = clean(" ".join(sentences[:3]))[:700]

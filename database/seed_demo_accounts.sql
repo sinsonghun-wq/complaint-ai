@@ -1,6 +1,6 @@
--- 개발용 초기 계정만 생성한다. 실제 데이터 복원 시 실행하지 않는다.
--- init.sql로 스키마를 만든 뒤 필요할 때 별도로 실행한다.
--- local 개발·테스트 전용 초기 계정. 운영 환경에서는 반드시 삭제하거나 별도 비밀번호로 교체한다.
+-- 개발용 초기 계정. 실제 운영/데이터 복원 시 실행하지 않는다.
+-- 일반 사용자 2개 + 현재 7개 통합 부서 관리자. init.sql 이후 별도로 실행한다.
+-- 기존 9개 부서 DB에 이 seed만 실행하지 말고 merge_to_seven_departments.py를 사용한다.
 INSERT INTO app_users (id, owner_id, email, username, display_name, password_salt, password_hash, account_role, department) VALUES
   ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-9000-000000000001', 'user-a@complaintai.local', 'user-a', '테스트 일반 사용자 A', '58bf4559c2c4498063d07dd64de7c61d', '8f0d4903c225b01684ab6d46548c193b6f549dd9dbbd14193e6c1e2a7a2b681c15316783cb9962c3befdca1a0dcf987ade02784318547b9350ef62bac4d161ee', 'user', NULL),
   ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-9000-000000000002', 'user-b@complaintai.local', 'user-b', '테스트 일반 사용자 B', '120b0ba4daf51a304f2c743204ba0d17', '3cbe0ecd7334a8b751c9eab368158eba290c6ac8c6199b7148eb7bcf6406701d14c10a7d50874f079ab8245c47805cf2fe93f847df43c7c43967e2cbff037f1a', 'user', NULL),

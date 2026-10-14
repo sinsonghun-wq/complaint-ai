@@ -41,3 +41,16 @@ EMBEDDING_TIMEOUT_MS = int(os.getenv("EMBEDDING_TIMEOUT_MS", "60000"))
 ACTIVE_EMBEDDING_MODEL = OLLAMA_EMBEDDING_MODEL if EMBEDDING_PROVIDER == "ollama" else EMBEDDING_MODEL
 TESSDATA_DIR = Path(os.getenv("TESSDATA_DIR", str(ROOT / "data" / "tessdata"))).resolve()
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()
+
+# Citizen recommendations have an independent 1024-dimensional knowledge index.
+RAG_OLLAMA_URL = os.getenv("RAG_OLLAMA_URL", OLLAMA_URL).rstrip("/")
+RAG_EMBEDDING_MODEL = os.getenv("RAG_EMBEDDING_MODEL", "qwen3-embedding:0.6b")
+RAG_LLM_MODEL = os.getenv("RAG_LLM_MODEL", "qwen3.5:4b")
+RAG_RERANKER_URL = os.getenv("RAG_RERANKER_URL", "http://127.0.0.1:8001").rstrip("/")
+RAG_TIMEOUT_SECONDS = max(30, int(os.getenv("RAG_TIMEOUT_SECONDS", "600")))
+RAG_CANDIDATES = max(4, min(30, int(os.getenv("RAG_CANDIDATES", "6"))))
+RAG_CONTEXT_CHUNKS = max(1, min(8, int(os.getenv("RAG_CONTEXT_CHUNKS", "4"))))
+RAG_MIN_RELEVANCE = max(0, min(1, float(os.getenv("RAG_MIN_RELEVANCE", "0.35"))))
+RAG_NUM_CTX = max(2048, int(os.getenv("RAG_NUM_CTX", "8192")))
+RAG_NUM_PREDICT = max(128, int(os.getenv("RAG_NUM_PREDICT", "700")))
+COMPLAINT_SEARCH_MIN_RELEVANCE = max(0, min(1, float(os.getenv("COMPLAINT_SEARCH_MIN_RELEVANCE", "0.35"))))
