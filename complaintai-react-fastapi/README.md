@@ -63,11 +63,11 @@
 
 | 계정 이름 | ID | 비밀번호 | 담당 부서 |
 | --- | --- | --- | --- |
-| 노동·기업 관리자 | `admin-labor-business` | `AdminLaborBusiness!2026` | 노동·기업 |
-| 교통·국토 관리자 | `admin-traffic-land` | `AdminTrafficLand!2026` | 교통·국토 |
+| 노동·기업 관리자 | `admin-labor-business` | `AdminLabor!2026` | 노동·기업 |
+| 교통·국토 관리자 | `admin-land-transport` | `AdminLand!2026` | 교통·국토 |
 | 주택·건축 관리자 | `admin-housing` | `AdminHousing!2026` | 주택·건축 |
 | 환경·위생 관리자 | `admin-environment` | `AdminEnvironment!2026` | 환경·위생 |
-| 문화·행정·안전 관리자 | `admin-culture-safety` | `AdminCulture!2026` | 문화·행정·안전 |
+| 문화·행정·안전 관리자 | `admin-administration-safety` | `AdminService!2026` | 문화·행정·안전 |
 | 보건·복지 관리자 | `admin-welfare` | `AdminWelfare!2026` | 보건·복지 |
 | 기타 관리자 | `admin-other` | `AdminOther!2026` | 기타 |
 

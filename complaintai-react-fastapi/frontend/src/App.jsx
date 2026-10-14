@@ -4,7 +4,7 @@ import departments from "../../app/departments.json";
 import AIRecommendations, { useRecommendations } from "./AIRecommendations.jsx";
 import ComplaintFilters, { appendComplaintFilters, citizenViewStatusLabel } from "./ComplaintFilters.jsx";
 
-const categories = departments.map((department) => department.name);
+const categories = ["노동·기업", "교통·국토", "주택·건축", "환경·위생", "문화·행정·안전", "보건·복지", "기타"]; // app/categories.py 의 NAMES 와 같은 순서
 const statusLabel = (value) => ({ "접수": "접수 대기", "진행중": "접수 됨" }[value] || value);
 const isOpen = (record) => ["접수", "진행중"].includes(record?.complaint_status);
 const key = "complaintai.fastapi.auth";
