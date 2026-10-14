@@ -12,6 +12,7 @@ from .chat_intent import ChatIntentBody, ChatIntentResult, IntentUnavailable, cl
 from .complaint_search import router as complaint_search_router
 from .rag import run_recommendation
 from .security import actor_from_auth
+from .logger import logger
 
 router = APIRouter(prefix='/api/ai-recommendations', tags=['AI 추천 답변'])
 
@@ -107,6 +108,7 @@ async def intent(body: ChatIntentBody, actor: Annotated[dict, Depends(actor_from
     try:
         return await classify_chat_intent(body)
     except IntentUnavailable as exc:
+        logger.exception(exc)
         raise HTTPException(503, str(exc)) from exc
 
 

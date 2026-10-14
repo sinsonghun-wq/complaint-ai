@@ -57,10 +57,22 @@ IMPORT_HEARTBEAT_TIMEOUT_SECONDS = max(60, int(os.getenv("IMPORT_HEARTBEAT_TIMEO
 IMPORT_WORKER_POLL_SECONDS = max(1, int(os.getenv("IMPORT_WORKER_POLL_SECONDS", "2")))
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "ollama")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
-OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "qwen3-embedding:4b")
+OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "bge-m3:latest")
 EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "").rstrip("/")
 EMBEDDING_TIMEOUT_MS = int(os.getenv("EMBEDDING_TIMEOUT_MS", "60000"))
 # 실제로 임베딩에 쓰는 모델 이름 (EMBEDDING_PROVIDER 에 따라 .env 값 중 하나). DB 기록·API 응답에 이 값을 씁니다.
 ACTIVE_EMBEDDING_MODEL = OLLAMA_EMBEDDING_MODEL if EMBEDDING_PROVIDER == "ollama" else EMBEDDING_MODEL
 TESSDATA_DIR = Path(os.getenv("TESSDATA_DIR", str(ROOT / "data" / "tessdata"))).resolve()
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()
+# Citizen recommendations have an independent 1024-dimensional knowledge index.
+RAG_OLLAMA_URL = os.getenv("RAG_OLLAMA_URL", OLLAMA_URL).rstrip("/")
+RAG_EMBEDDING_MODEL = os.getenv("RAG_EMBEDDING_MODEL", "bge-m3:latest")
+RAG_LLM_MODEL = os.getenv("RAG_LLM_MODEL", "gemma4:e4b")
+RAG_RERANKER_URL = os.getenv("RAG_RERANKER_URL", "http://127.0.0.1:8001").rstrip("/")
+RAG_TIMEOUT_SECONDS = max(30, int(os.getenv("RAG_TIMEOUT_SECONDS", "600")))
+RAG_CANDIDATES = max(4, min(30, int(os.getenv("RAG_CANDIDATES", "6"))))
+RAG_CONTEXT_CHUNKS = max(1, min(8, int(os.getenv("RAG_CONTEXT_CHUNKS", "4"))))
+RAG_MIN_RELEVANCE = max(0, min(1, float(os.getenv("RAG_MIN_RELEVANCE", "0.35"))))
+RAG_NUM_CTX = max(2048, int(os.getenv("RAG_NUM_CTX", "8192")))
+RAG_NUM_PREDICT = max(128, int(os.getenv("RAG_NUM_PREDICT", "700")))
+COMPLAINT_SEARCH_MIN_RELEVANCE = max(0, min(1, float(os.getenv("COMPLAINT_SEARCH_MIN_RELEVANCE", "0.35"))))

@@ -10,6 +10,7 @@ from datetime import date
 from . import settings
 from .db import connection, fetch_all, fetch_one
 from .rag_models import PROMPT_VERSION, RagError, embed_texts, embedding_identity, generate_answer, rerank
+from .logger import logger
 
 recommendation_slots = asyncio.Semaphore(1)
 
@@ -174,6 +175,7 @@ async def run_recommendation(identifier: str) -> None:
                     conn.execute("UPDATE ai_recommendations SET status='completed',stage='completed',result=%s::jsonb,model_metadata=%s::jsonb,updated_at=NOW() WHERE id=%s", (json.dumps(result, ensure_ascii=False), json.dumps(result['models']), identifier))
             await asyncio.to_thread(complete)
         except Exception as exc:
+            logger.exception(exc)
             code = exc.code if isinstance(exc, RagError) else 'recommendation_failed'
             message = str(exc) if isinstance(exc, RagError) else 'AI 추천 답변을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'
             def fail():
