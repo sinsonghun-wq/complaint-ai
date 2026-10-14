@@ -10,6 +10,7 @@ from .db import connection, fetch_all, fetch_one
 from .config import WEB_ORIGINS, FILE_STORAGE_DIR
 from .services.complaint import classification_tasks, classify_submission
 from .routers import auth, complaints
+from .rag_api import router as rag_router
 
 auth_header = APIKeyHeader(name="Authorization", auto_error=False)
 app = FastAPI(title="ComplaintAI FastAPI", version="1.0.0", dependencies=[Depends(auth_header)], lifespan=lifespan)

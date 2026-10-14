@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 @router.post("/login")
 def login(body: LoginBody):
-    user = fetch_one("SELECT id,owner_id,username,display_name,account_role,department,password_salt,password_hash FROM app_users WHERE username=%s", (body.username.strip(),))
+    user = fetch_one("SELECT id,owner_id,username,display_name,account_role,department_id,password_salt,password_hash FROM app_users WHERE username=%s", (body.username.strip(),))
     if not user or not verify_password(body.password, user["password_salt"], user["password_hash"]):
         raise HTTPException(401, "계정 또는 비밀번호가 올바르지 않습니다.")
     return {"token": issue_token(user), "user": public_user(user)}
@@ -22,7 +22,7 @@ def signup(body: SignupBody):
     if not username.replace("_", "").replace("-", "").isalnum() or not 3 <= len(username) <= 30 or len(body.password) < 8:
         raise HTTPException(400, "계정은 3~30자, 비밀번호는 8자 이상이어야 합니다.")
     salt, digest = password_hash(body.password)
-    user = {"id": uuid4(), "owner_id": uuid4(), "username": username, "display_name": body.display_name.strip() or username, "account_role": "user", "department": None}
+    user = {"id": uuid4(), "owner_id": uuid4(), "username": username, "display_name": body.display_name.strip() or username, "account_role": "user", "department_id": None}
     try:
         with connection() as conn:
             with conn.cursor() as cur:
