@@ -47,6 +47,17 @@ def setup_korean_font() -> None:
     _font_ready = True
 
 
+def _plain_log_formatter(label_only_base: bool = True):
+    """로그 눈금 숫자를 수식(10^-1) 대신 일반 숫자(0.1)로. 수식 글꼴의 마이너스 기호(U+2212) 경고를 피함."""
+    from matplotlib.ticker import LogFormatter
+
+    class PlainLogFormatter(LogFormatter):
+        def _num_to_string(self, x, vmin, vmax):
+            return f"{x:g}"
+
+    return PlainLogFormatter(labelOnlyBase=label_only_base)
+
+
 def _fmt_time(sec: float) -> str:
     sec = int(sec)
     return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}" if sec >= 3600 else f"{sec // 60}:{sec % 60:02d}"
@@ -179,6 +190,11 @@ class LiveLossPlot(_callback_base()):
                 last.append(ys[-1])
             if min(last) > 0:
                 ax_k.set_yscale("log")
+                # 로그 눈금의 기본 표시(10^-1 처럼 수식으로 그림)는 수학용 마이너스 기호(U+2212)를 쓰는데,
+                # 나눔고딕에는 이 글자가 없어 경고(Font 'default' does not have a glyph for '\u2212')가 납니다.
+                # 0.1, 0.2 처럼 일반 숫자로 표시해 수식 글꼴을 쓰지 않게 합니다. (어느 눈금에 숫자를 붙일지는 기본과 같음)
+                ax_k.yaxis.set_major_formatter(_plain_log_formatter())
+                ax_k.yaxis.set_minor_formatter(_plain_log_formatter(label_only_base=False))
             ax_k.set_title("과제별 val loss (로그 눈금)", fontsize=10)
             ax_k.legend(loc="best", fontsize=8, framealpha=0.8)
         else:

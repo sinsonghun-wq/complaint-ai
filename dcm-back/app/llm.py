@@ -175,6 +175,15 @@ def make_chat_model(task: str = TASK_CHAT, temperature: float = 0.1):
 async def check_backend() -> dict[str, Any]:
     """서버 시작 때 한 번 - llama-server 가 떠 있는지, 어댑터가 올라와 있는지 로그로 알려 줍니다. (실패해도 앱은 계속 뜸)"""
     info: dict[str, Any] = {"backend": LLM_BACKEND, "models": {t: model_label(t) for t in TASKS}}
+    from . import prompts
+
+    style = prompts.analysis_prompt_style()
+    info["analysis_prompt_style"] = style
+    logger.info(f"[LLM] 분석 프롬프트: {style} ({prompts.prompt_version()})")
+    if style == "short" and not uses_adapter(TASK_ANALYSIS):
+        logger.warning("[LLM] ANALYSIS_PROMPT_STYLE=short 인데 민원 분석에 학습 어댑터를 쓰지 않습니다. "
+                       "짧은 프롬프트는 규칙을 학습으로 익힌 어댑터에서만 제대로 동작합니다. "
+                       "(llama_server 면 LLM_ADAPTER_TASKS 에 analysis 포함, ollama 면 short 로 학습한 병합 모델을 LLM_MODEL 로)")
     if not is_llama_server():
         logger.info(f"[LLM] backend=ollama url={OLLAMA_URL} models={info['models']}")
         return info

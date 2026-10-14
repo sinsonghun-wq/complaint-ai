@@ -446,19 +446,26 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--lora-id", type=int, default=0, help="[llama-server] 어댑터 순번 (첫 번째 --lora 가 0)")
     ap.add_argument("--limit", type=int, default=300, help="챗봇 평가 레코드 수 (0 이면 전부)")
     ap.add_argument("--num-ctx", type=int, default=8192, help="[ollama] 컨텍스트 길이 (llama-server 는 서버 실행 옵션 -c 를 씀)")
+    ap.add_argument("--prompt-style", choices=list(prompts.ANALYSIS_PROMPT_STYLES), default=None,
+                    help="분석 프롬프트 길이 (long/short). 어댑터를 학습할 때 쓴 값과 같게. 생략하면 ANALYSIS_PROMPT_STYLE 환경변수(기본 long)")
     a = ap.parse_args(argv)
+    if a.prompt_style:
+        import os
+        os.environ["ANALYSIS_PROMPT_STYLE"] = a.prompt_style
+    print(f"분석 프롬프트: {prompts.analysis_prompt_style()} ({prompts.prompt_version()})")
 
     if a.ollama:
         gen, name, label = ollama_generator(a.ollama, a.url, a.num_ctx), a.ollama, "Ollama"
-        out_name = f"eval_ollama_{a.ollama.replace(':', '_').replace('/', '_')}.json"
+        out_name = f"eval_ollama_{a.ollama.replace(':', '_').replace('/', '_')}_{prompts.analysis_prompt_style()}.json"
     else:
         adapters = check_llama_server(a.llama_server, a.lora_id)
         print(f"llama-server 어댑터: {adapters} -> 이번 평가 세기 {a.lora_scale}")
         gen = llama_server_generator(a.llama_server, a.lora_scale, a.lora_id)
         name, label = f"llama-server lora{a.lora_id}x{a.lora_scale:g}", f"llama-server x{a.lora_scale:g}"
-        out_name = f"eval_llama_server_lora{a.lora_id}_scale{a.lora_scale:g}.json"
+        out_name = f"eval_llama_server_lora{a.lora_id}_scale{a.lora_scale:g}_{prompts.analysis_prompt_style()}.json"
     started = time.time()
-    result: dict = {"model": name, "created_at": time.strftime("%Y-%m-%d %H:%M:%S"), "eval_version": EVAL_VERSION}
+    result: dict = {"model": name, "created_at": time.strftime("%Y-%m-%d %H:%M:%S"), "eval_version": EVAL_VERSION,
+                    "prompt_version": prompts.prompt_version()}
     chat = test_split(records_mod.load_chat_records())
     result["chat"] = evaluate_chat(gen, chat, a.limit or None, label=label)
     if common.ANALYSIS_RECORDS.exists():

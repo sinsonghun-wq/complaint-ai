@@ -10,6 +10,8 @@ LLM 에 보내는 프롬프트 모음 - 챗봇(agent.py)과 민원 분석(ai.py)
 
 from __future__ import annotations
 
+import os
+
 from . import categories as category_defs
 
 PROMPT_VERSION = "complaintai-ko-v7"   # v7: 챗봇 도구 선택을 의도 기준으로 다시 씀(기존 민원 다루기 / 알리거나 조치를 바라는 일 - 칭찬·제안 포함 / 의사만 / 일반 정보 문의 / 무관) / v3: 프롬프트 분리·confidence/reason 제거·안내 문구 고정 / v4: 짧은 원문의 summary·keywords 개수 규칙 / v5: keywords 는 제목이 아닌 원문에서(띄어쓰기 그대로) / v6: selectComplaintT 의 is_described 인자 제거(content 가 비었는지로 판단)
@@ -132,6 +134,29 @@ ANALYSIS_JSON_SCHEMA: dict = {
     "additionalProperties": False,
 }
 
+# 분석 프롬프트 길이 - "long"(기존, 카테고리 정의·작성 규칙 전체 약 3,000자) / "short"(카테고리 이름·출력 형식만 약 300자)
+# short 는 규칙을 프롬프트로 설명하지 않고 학습 데이터로 익히게 하는 방식입니다. (학습 시간·실행 시간이 크게 줄어듦)
+#   - 앱: dcm-back/.env 의 ANALYSIS_PROMPT_STYLE
+#   - 학습: 노트북 4번 셀의 ANALYSIS_PROMPT_STYLE (같은 환경변수를 설정)
+# 학습한 길이와 실행 길이가 반드시 같아야 합니다. short 로 학습한 어댑터를 long 프롬프트로 쓰거나 그 반대면 성능이 떨어집니다.
+# short 는 어댑터 없이(베이스 모델만)는 규칙을 모르므로, 어댑터를 켠 분석에만 쓰세요.
+ANALYSIS_PROMPT_STYLES: tuple[str, ...] = ("long", "short")
+
+
+def analysis_prompt_style() -> str:
+    """현재 분석 프롬프트 길이. 호출할 때마다 환경변수를 읽습니다. (.env 를 읽는 순서·노트북 설정 순서와 무관하게 동작)"""
+    style = os.getenv("ANALYSIS_PROMPT_STYLE", "long").strip().lower() or "long"
+    if style not in ANALYSIS_PROMPT_STYLES:
+        raise ValueError(f"ANALYSIS_PROMPT_STYLE 은 {ANALYSIS_PROMPT_STYLES} 중 하나여야 합니다: {style!r}")
+    return style
+
+
+def prompt_version() -> str:
+    """DB(prompt_version)·학습 기록·평가 캐시 이름에 쓰는 프롬프트 버전. 분석 프롬프트 길이까지 구분합니다.
+    예: complaintai-ko-v7 (long) / complaintai-ko-v7-short"""
+    return PROMPT_VERSION if analysis_prompt_style() == "long" else f"{PROMPT_VERSION}-{analysis_prompt_style()}"
+
+
 # 분석 프롬프트에 넣는 민원 원문 최대 글자 수. 넘으면 앞부분만 넣고 생략 표시를 붙입니다.
 # (긴 문서에서 컨텍스트를 넘겨 지시문이 잘리는 것을 막기 위함. 학습 데이터도 같은 규칙으로 자릅니다)
 ANALYSIS_CONTENT_MAX_CHARS = 1500
@@ -152,7 +177,25 @@ def analysis_content(content: str) -> str:
 
 def analysis_prompt(title: str, content: str) -> str:
     """민원 분석 프롬프트. title·content 는 호출하는 쪽에서 공백 정리·개인정보 가림을 마친 값이어야 합니다.
-    원문이 길면 analysis_content() 규칙으로 잘라서 넣습니다."""
+    원문이 길면 analysis_content() 규칙으로 잘라서 넣습니다. 길이는 ANALYSIS_PROMPT_STYLE 로 고릅니다."""
+    if analysis_prompt_style() == "short":
+        return analysis_prompt_short(title, content)
+    return analysis_prompt_long(title, content)
+
+
+def analysis_prompt_short(title: str, content: str) -> str:
+    """짧은 분석 프롬프트 (약 300자). 카테고리 판단 기준·작성 규칙은 학습 데이터로 익힙니다."""
+    names = ", ".join(category_defs.NAMES)
+    return (
+        "민원을 분석해 JSON만 반환한다. 원문에 없는 사실은 만들지 않는다.\n"
+        f"category: {names} 중 하나\n"
+        f"{_ANALYSIS_SCHEMA}\n\n"
+        f"민원 제목:\n{title}\n\n민원 원문:\n{analysis_content(content)}"
+    )
+
+
+def analysis_prompt_long(title: str, content: str) -> str:
+    """긴 분석 프롬프트 (약 3,000자) - 카테고리 정의·작성 규칙을 모두 설명합니다. 어댑터 없이도 동작합니다."""
     names = ", ".join(category_defs.NAMES)
     return (
         "당신은 대한민국 민원 데이터를 정확하고 중립적으로 처리하는 AI다. "
