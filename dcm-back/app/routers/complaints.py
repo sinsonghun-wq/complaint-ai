@@ -566,8 +566,13 @@ async def chatAI(chatBody: ChatRequestBody, actor: Annotated[dict, Depends(actor
 
 
 # 청킹 단위 설정 (예: 한 청크당 묶을 CSV 행 개수.)
-CHUNK_ROW_SIZE = 50000
+#csv의 경우 각 줄 사이에는 맥락이 없으므로 csv를 잘게 쪼갰을 때 성능 저하는 없기 때문에 한줄씩 자르는 것이 성능이 가장 확실
+#시간이 매우 오래 걸리기 때문에 개발 단계에서는 일단 CHUNK_ROW_SIZE=5 정도로 타협
+#CHUNK_ROW_SIZE를 크게 설정할 수록 LLM이 이를 잘 받아들이지 못해 답변이 고장날 가능성이 높아집니다.
 
+CHUNK_ROW_SIZE = 5
+
+#7분야 csv 전용 파싱툴 (pdf 등은 새로 제작 필요)
 @router.post("/documents", status_code=201)
 async def create_department_document(
     file: UploadFile = File(...),
@@ -575,11 +580,10 @@ async def create_department_document(
 ):
     require_department(actor)
     
-    # 1. 파일 형식 검증 (CSV 파일만 허용)
+    # 1. 파일 형식 검증 및 텍스트 디코딩
     if not file.filename or not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="CSV 파일만 업로드할 수 있습니다.")
     
-    # 2. 파일 읽기 및 텍스트 디코딩
     contents = await file.read()
     try:
         decoded_content = contents.decode("utf-8")
@@ -587,7 +591,7 @@ async def create_department_document(
         decoded_content = contents.decode("euc-kr")
     
     csv_reader = csv.reader(io.StringIO(decoded_content))
-    header = next(csv_reader, None) # 헤더 건너뛰기
+    header = next(csv_reader, None)
     
     document_id = str(uuid4())
     department_id = actor.get("department_id", 0)
@@ -595,87 +599,110 @@ async def create_department_document(
     storage_path = f"data/uploads/{document_id}.csv"
     created_by = actor.get("sub") or actor.get("owner_id")
     
-    saved_count = 0
-    chunk_buffer = []
-    version = 1
+    # 3. CSV 행(Row)을 먼저 모두 읽어 청크 단위로 분할
+    chunks = []
+    current_chunk = []
+    
+    for row in csv_reader:
+        if len(row) < 8:
+            continue
+        title = row[5]
+        question = row[6]
+        answer = row[7]
+        
+        row_text = f"[title:{title} | question:{question} | answer: {answer}]"
+        current_chunk.append(row_text)
+        
+        if len(current_chunk) >= CHUNK_ROW_SIZE:
+            chunks.append(current_chunk)
+            current_chunk = []
+            
+    if current_chunk:
+        chunks.append(current_chunk)
+        
+    if not chunks:
+        raise HTTPException(status_code=400, detail="처리할 유효한 데이터가 없습니다.")
 
+    # 4. 개별 청크에 대한 임베딩을 비동기 병렬로 처리하는 함수
+    semaphore = asyncio.Semaphore(5)  # 동시에 처리할 최대 Ollama 요청 수 (서버 사양에 맞게 조절)
+
+    async def process_chunk(client: httpx.AsyncClient, chunk_texts: list[str], version: int) -> dict[str, Any]:
+        valid_inputs = [text for text in chunk_texts if text.strip()]
+        if not valid_inputs:
+            return None
+            
+        doc_title = f"{original_name[:-4]}_{version}.csv"
+        
+        async with semaphore:
+            response = await client.post(
+                f"{OLLAMA_URL}/api/embed",
+                json={"model": OLLAMA_EMBEDDING_MODEL, "input": valid_inputs, "keep_alive": "10m"}
+            )
+            response.raise_for_status()
+            
+        embeddings = response.json().get("embeddings", [])
+        if not embeddings:
+            return None
+            
+        # 벡터 평균 계산
+        vector_dim = len(embeddings[0])
+        avg_vector = [0.0] * vector_dim
+        for v in embeddings:
+            for i in range(vector_dim):
+                avg_vector[i] += v[i]
+        avg_vector = [x / len(embeddings) for x in avg_vector]
+        
+        return {
+            "new_id": str(uuid4()),
+            "doc_title": doc_title,
+            "version": version,
+            "chunk_content": "\n".join(valid_inputs),
+            "vector_str": vector_literal(avg_vector)
+        }
+
+    # 5. 모든 청크의 임베딩을 비동기로 동시에 요청
     async with httpx.AsyncClient(timeout=60.0) as client:
-        with connection() as conn:
-            with conn.cursor() as cur:
-                
-                # 내부 함수: 버퍼에 쌓인 행들을 하나의 텍스트 청크로 합치고 임베딩 및 DB 저장 수행
-                async def flush_chunk(buffer: list, current_version: int):
-                    if not buffer:
-                        return 0
-                    
-                    # 묶인 행들을 하나의 텍스트 내용으로 결합
-                    chunk_content = "\n".join(buffer)
-                    if not chunk_content.strip():
-                        return 0
-                    
-                    doc_title = f"{original_name[:-4]}_{current_version}.csv"
-                    
-                    # Ollama 임베딩 요청 (청크 단위 전체 문맥에 대해 1회 요청)
-                    response = await client.post(
-                        f"{OLLAMA_URL}/api/embed",
-                        json={"model": OLLAMA_EMBEDDING_MODEL, "input": chunk_content, "keep_alive": "10m"}
-                    )
-                    response.raise_for_status()
-                    vector = response.json().get("embeddings", [None])[0]
+        tasks = [
+            process_chunk(client, chunk, idx + 1) 
+            for idx, chunk in enumerate(chunks)
+        ]
+        processed_results = await asyncio.gather(*tasks)
 
-                    vector_str = vector_literal(vector) if vector else None
-                    new_id = str(uuid4())
+    # None 결과 필터링
+    valid_results = [res for res in processed_results if res is not None]
+    
+    if not valid_results:
+        raise HTTPException(status_code=400, detail="생성된 임베딩이 없습니다.")
 
-                    # department_documents 테이블에 insert
-                    sql = """
-                        INSERT INTO department_documents (
-                            id, document_id, department_id, title, original_name, version, 
-                            storage_path, content, embedding, created_by, created_at
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, NOW())
-                    """
-                    
-                    cur.execute(sql, (
-                        new_id,
-                        document_id,
-                        department_id,
-                        doc_title,
-                        original_name,
-                        current_version,
-                        storage_path,
-                        chunk_content,
-                        vector_str,
-                        created_by
-                    ))
-                    return 1
-
-                # 3. CSV 행(Row)을 순회하며 청크 단위로 모으기
-                for row in csv_reader:
-                    if len(row) < 8:
-                        continue
-                    
-                    title = row[5]
-                    question = row[6]
-                    answer = row[7]
-                    
-                    # 한 줄의 포맷팅
-                    row_text = f"title:{title} | question:{question} | answer: {answer}"
-                    chunk_buffer.append(row_text)
-                    
-                    # 설정한 청크 사이즈(예: 50줄)에 도달하면 DB에 저장 후 버퍼 비우기
-                    if len(chunk_buffer) >= CHUNK_ROW_SIZE:
-                        saved_count += await flush_chunk(chunk_buffer, version)
-                        chunk_buffer.clear()
-                        version += 1
-                
-                # 마지막에 남은 잔여 행 처리
-                if chunk_buffer:
-                    saved_count += await flush_chunk(chunk_buffer, version)
-                    
-            conn.commit()
+    # 6. 수집된 결과를 데이터베이스에 일괄 저장
+    saved_count = 0
+    with connection() as conn:
+        with conn.cursor() as cur:
+            sql = """
+                INSERT INTO department_documents (
+                    id, document_id, department_id, title, original_name, version, 
+                    storage_path, content, embedding, created_by, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, NOW())
+            """
+            for res in valid_results:
+                cur.execute(sql, (
+                    res["new_id"],
+                    document_id,
+                    department_id,
+                    res["doc_title"],
+                    original_name,
+                    res["version"],
+                    storage_path,
+                    res["chunk_content"],
+                    res["vector_str"],
+                    created_by
+                ))
+                saved_count += 1
+        conn.commit()
 
     return {
-        "message": "대용량 문서가 의미 단위로 청킹되어 성공적으로 저장되었습니다.",
+        "message": "대용량 문서가 비동기 청킹되어 성공적으로 저장되었습니다.",
         "document_id": document_id,
         "total_versions": saved_count
     }

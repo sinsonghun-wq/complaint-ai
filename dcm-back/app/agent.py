@@ -6,6 +6,7 @@ from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 from langchain.agents import create_agent
 from contextlib import asynccontextmanager
+from langgraph.errors import GraphRecursionError
 
 from app.models import ChatRequestBody, ChatResponseBody
 
@@ -16,13 +17,30 @@ from .ai import embeddingForSelect
 from .db import fetch_all
 from langgraph.checkpoint.memory import MemorySaver
 
-ROW_LIMIT = 5
+# RAG_ROW_LIMIT을 2 이상으로 하려면 csv를 row마다 쪼개서 집어 넣어야 가능할 것으로 보입니다.
+# context window 크기를 넘어서면 오류 없이 그냥 먹통이 됩니다.
+RAG_ROW_LIMIT = 1
+COMPLAINT_ROW_LIMIT = 3
 
 # --- 툴 정의 ---
 # 도구 설명(LLM 이 읽는 문장)은 prompts.TOOL_DESCRIPTIONS 에서 관리합니다.
 # LangChain 은 함수 docstring 을 도구 설명으로 쓰므로, 설명을 넣은 뒤에 tool() 로 감쌉니다.
-async def aiFAQ() -> dict:
-    return {"code": 0, "result": []}
+async def aiFAQ(content: str, is_described: bool) -> dict:
+    rows = []
+    vector = await embeddingForSelect(content) if is_described  else None
+    if vector:
+        rows = fetch_all(
+            f"""
+                SELECT SUBSTRING(content, 1, 30000) AS content
+                FROM department_documents 
+                WHERE deleted_at IS NULL 
+                ORDER BY embedding <=> %s::vector 
+                LIMIT {RAG_ROW_LIMIT};
+            """,
+            (str(vector),)
+        )
+
+    return {"code": 0, "result": rows}
 
 def insertRequestT(title: str, content: str) -> dict:
     return {"code": 1, "result": [{"title": title, "content": content}]}
@@ -47,7 +65,7 @@ async def selectComplaintT(content: str, config: RunnableConfig) -> dict:
                 FROM complaints 
                 WHERE owner_user_id = %s 
                 ORDER BY embedding <=> %s::vector 
-                LIMIT {ROW_LIMIT};
+                LIMIT {COMPLAINT_ROW_LIMIT};
             """,
             (user_id, str(vector))
         )
@@ -75,8 +93,6 @@ async def llm_worker(llm, tools_dict):
             logger.info(f"--- [처리 시작] 유저 ID: {user_id} | agent_mode:{agent_mode} | 질문: {query} ---")
             
             # agent_mode에 따라 사용할 수 있는 툴을 동적으로 필터링하여 바인딩
-            # agent_mode 0: insertRequest, selectComplaintT
-            # agent_mode 1: aiFAQ
             if agent_mode == 0:
                 active_tools = [tools_dict["insertRequestT"], tools_dict["selectComplaintT"]]
             elif agent_mode == 1:
@@ -88,9 +104,9 @@ async def llm_worker(llm, tools_dict):
 
             agent_executor = create_agent(llm, active_tools, checkpointer=memory, system_prompt=current_system_prompt)
 
-            config = {"configurable": {"user_id": user_id, "thread_id": user_id}}
+            config = {"configurable": {"user_id": user_id, "thread_id": user_id},"recursion_limit": 5}
             
-            # 모드는 시스템 프롬프트에 들어 있으므로 사용자 메시지에는 질문만 넣습니다. (prompts.agent_user_message)
+            # 모드는 시스템 프롬프트에 들어 있으므로 사용자 메시지에는 질문만 넣습니다.
             injected_query = prompts.agent_user_message(query)
             
             final_code = 0
@@ -107,14 +123,14 @@ async def llm_worker(llm, tools_dict):
                 
                 if kind == "on_chat_model_end":
                     output_message = event["data"].get("output")
+                    logger.info(output_message)
                     if hasattr(output_message, "content") and output_message.content:
-                        if not getattr(output_message, "tool_calls", None):
-                            final_message = output_message.content
+                        final_message = output_message.content
                 
                 elif kind == "on_tool_end":
                     tool_output = event["data"].get("output")
                     tool_name = event.get("name")
-                    logger.info(f"[{user_id}] Tool 호출됨 [{tool_name}] - 원본 반환값: {tool_output}")
+                    logger.info(f"[{user_id}] Tool 호출됨 [{tool_name}] - 원본 반환값: {str(tool_output)[:200]}")
                     
                     data = parse_tool_output_safe(tool_output)
                     if data:
@@ -122,12 +138,14 @@ async def llm_worker(llm, tools_dict):
                             final_code = data["code"]
                         if "result" in data and data["result"]:
                             final_result_list = data["result"]
-                        if "message" in data and data["message"]:
-                            tool_message = data["message"]
 
             if tool_message and not final_message:
                 final_message = tool_message
 
+            # aiFAQ의 경우 agent가 반환값을 볼 필요는 있지만, 유저한테까지 갈 필요는 없으므로 필터링
+            if final_code == 0:
+                final_result_list = []
+                
             final_response = ChatResponseBody(
                 code=final_code,
                 message=final_message,
@@ -136,6 +154,17 @@ async def llm_worker(llm, tools_dict):
             
             logger.info(f"--- [처리 완료] 유저 ID: {user_id} | 응답: {final_response} ---\n")
             
+            if future and not future.done():
+                future.set_result(final_response)
+                
+        except GraphRecursionError as e:
+            logger.error(f"[{user_id}] LangGraph Recursion Limit 도달: {e}")
+            final_response = ChatResponseBody(
+                code=0,
+                message="죄송합니다, 이해할 수 없는 내용입니다.",
+                result=[]
+            )
+            logger.info(f"--- [처리 완료(제한 도달)] 유저 ID: {user_id} | 응답: {final_response} ---\n")
             if future and not future.done():
                 future.set_result(final_response)
                 
@@ -186,10 +215,8 @@ async def lifespan(app: FastAPI):
         "selectComplaintT": selectComplaintT,
     }
     
-    # 챗봇 모델 - .env 의 LLM_BACKEND 에 따라 ChatOllama 또는 ChatOpenAI(llama-server + 어댑터)
-    # (Ollama 일 때 num_ctx 를 민원 분석과 같게 맞추는 것도 llm.make_chat_model 안에서 합니다)
     await llm_backend.check_backend()
-    llm = llm_backend.make_chat_model(llm_backend.TASK_CHAT, temperature=0.1)
+    llm = llm_backend.make_chat_model(llm_backend.TASK_CHAT, temperature=0.2)
 
     # 백그라운드 워커에 llm과 tools_dict 전달
     worker_task = asyncio.create_task(llm_worker(llm, tools_dict))
