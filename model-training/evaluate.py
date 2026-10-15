@@ -10,9 +10,9 @@
   1 과 2·3 의 결과가 크게 다르면 그 서버의 프롬프트 조립이 학습 때와 다르다는 뜻입니다.
 
 평가 (저장소 루트에서, 서버가 떠 있는 PC)
-    python model-training/evaluate.py --ollama complaint-gemma4:latest --limit 300
-    python model-training/evaluate.py --llama-server http://127.0.0.1:8080 --limit 300                 # 어댑터 켬
-    python model-training/evaluate.py --llama-server http://127.0.0.1:8080 --lora-scale 0 --limit 300  # 같은 서버의 베이스 모델
+    python model-training/evaluate.py --ollama complaint-gemma4:latest --limit 600
+    python model-training/evaluate.py --llama-server http://127.0.0.1:8080 --limit 600                 # 어댑터 켬
+    python model-training/evaluate.py --llama-server http://127.0.0.1:8080 --lora-scale 0 --limit 600  # 같은 서버의 베이스 모델
 
 지표
   챗봇 (chat_call)  : 도구 선택 정확도, 접수 content 정확 일치, 조회 content 정확 일치, 도구 없는 답의 고정 문구 일치
@@ -136,28 +136,138 @@ def parse_json_output(text: str) -> dict | None:
 # =============================================================================
 # 생성기 (HF / Ollama) - gen(messages, tools=None, schema=None) -> dict
 # =============================================================================
-def hf_generator(model, tokenizer, max_new_tokens: int = 512):
+def _is_oom(exc: BaseException) -> bool:
+    """GPU 메모리 부족 오류인지. (torch 버전에 따라 OutOfMemoryError 또는 'out of memory' RuntimeError)"""
+    return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower()
+
+
+def hf_generator(model, tokenizer, max_new_tokens: int = 512, batch_size: int = 1):
+    """
+    gen(messages, tools, schema) -> dict   : 한 건씩 생성 (예전과 같음)
+    gen.many(requests)                     : 여러 건을 batch_size 개씩 묶어 생성 - 결과를 묶음마다 내보냄 (yield)
+      requests = [(messages, tools, schema), ...]. 결과 순서는 requests 순서와 같습니다.
+      - 길이가 비슷한 것끼리 묶어(긴 것부터) 패딩 낭비를 줄이고, 메모리가 가장 많이 드는 묶음을 먼저 만나게 합니다.
+      - GPU 메모리가 모자라면 멈추지 않고 묶음 크기를 반으로 줄여(8 -> 4 -> 2 -> 1) 같은 묶음을 다시 생성합니다.
+        1 에서도 모자라면 그때는 오류를 냅니다. (한 건씩 생성하는 예전 방식과 같은 조건)
+      - 줄어든 묶음 크기는 이 생성기에 남아, 같은 평가 안에서 다시 실패하지 않습니다. (gen.batch_size 로 확인)
+    batch_size=1 이면 many 도 한 건씩 생성합니다.
+    """
     import torch
 
     specials = sorted({t for t in (tokenizer.all_special_tokens or []) if t}
                       | {t.content for t in getattr(tokenizer, "added_tokens_decoder", {}).values()
                          if getattr(t, "special", False) and t.content}, key=len, reverse=True)
     stop = [turn_end_id(tokenizer)] + ([tokenizer.eos_token_id] if tokenizer.eos_token_id is not None else [])
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
 
-    def gen(messages: list[dict], tools: list[dict] | None = None, schema: dict | None = None) -> dict:
-        text = render(tokenizer, messages, tools, add_generation_prompt=True)
-        enc = tokenizer(text, add_special_tokens=False, return_tensors="pt").to(model.device)
-        with torch.inference_mode():
-            out = model.generate(**enc, max_new_tokens=max_new_tokens, do_sample=False, eos_token_id=stop,
-                                 pad_token_id=tokenizer.pad_token_id, use_cache=True)
-        new_ids = out[0][enc["input_ids"].shape[1]:]
+    def finish(new_ids: list[int]) -> dict:
+        # 묶음 생성에서는 먼저 끝난 문장 뒤에 패딩이 붙으므로, 첫 끝 토큰까지만 씁니다. (한 건 생성과 같은 결과)
+        for i, tok in enumerate(new_ids):
+            if tok in stop:
+                new_ids = new_ids[:i + 1]
+                break
         raw = tokenizer.decode(new_ids, skip_special_tokens=False)
         result = parse_raw(raw, specials)
         # 끝 토큰 없이 max_new_tokens 를 다 쓰고 멈췄으면 '잘림' (분석 JSON 이 닫히지 않은 원인 구분용)
-        result["truncated"] = len(new_ids) >= max_new_tokens and int(new_ids[-1]) not in stop
+        result["truncated"] = len(new_ids) >= max_new_tokens and (not new_ids or new_ids[-1] not in stop)
         return result
 
+    def generate_texts(texts: list[str]) -> list[dict]:
+        if len(texts) == 1:
+            enc = tokenizer(texts[0], add_special_tokens=False, return_tensors="pt").to(model.device)
+        else:
+            side = tokenizer.padding_side
+            tokenizer.padding_side = "left"       # 생성은 왼쪽 패딩이어야 모든 문장의 끝이 맞춰짐
+            try:
+                enc = tokenizer(texts, add_special_tokens=False, return_tensors="pt", padding=True).to(model.device)
+            finally:
+                tokenizer.padding_side = side
+        with torch.inference_mode():
+            out = model.generate(**enc, max_new_tokens=max_new_tokens, do_sample=False, eos_token_id=stop,
+                                 pad_token_id=pad_id, use_cache=True)
+        start = enc["input_ids"].shape[1]
+        return [finish(out[i][start:].tolist()) for i in range(len(texts))]
+
+    def gen(messages: list[dict], tools: list[dict] | None = None, schema: dict | None = None) -> dict:
+        return generate_texts([render(tokenizer, messages, tools, add_generation_prompt=True)])[0]
+
+    def many(requests: list[tuple]):
+        texts = [render(tokenizer, m, t, add_generation_prompt=True) for m, t, *_ in requests]
+        lengths = [len(tokenizer(x, add_special_tokens=False)["input_ids"]) for x in texts]
+        order = sorted(range(len(texts)), key=lambda i: -lengths[i])
+        results: dict[int, dict] = {}
+        done = 0   # requests 순서로 몇 건까지 내보냈는지
+        pos = 0
+        while pos < len(order):
+            idx = order[pos:pos + gen.batch_size]
+            try:
+                outs = generate_texts([texts[i] for i in idx])
+            except Exception as exc:   # noqa: BLE001 - 메모리 부족만 처리하고 나머지는 그대로 올림
+                if not _is_oom(exc) or gen.batch_size == 1:
+                    raise
+                del exc
+                torch.cuda.empty_cache()
+                gen.batch_size = max(1, gen.batch_size // 2)
+                print(f"\n[묶음 생성] GPU 메모리 부족 - 묶음 크기를 {gen.batch_size} 로 줄여 다시 생성합니다.", flush=True)
+                continue
+            for i, o in zip(idx, outs):
+                results[i] = o
+            pos += len(idx)
+            batch = []
+            while done in results:                 # 원래 순서대로 이어진 만큼만 내보냄
+                batch.append(results.pop(done))
+                done += 1
+            yield len(idx), batch
+
+    gen.batch_size = max(1, int(batch_size))
+    gen.many = many
     return gen
+
+
+def generate_all(gen, requests: list[tuple], label: str) -> list[dict]:
+    """requests = [(messages, tools, schema), ...] 를 모두 생성해 같은 순서로 돌려줍니다. 진행 줄을 갱신합니다.
+    gen.many 가 있으면(HF 생성기) 묶어서, 없으면(Ollama·llama-server) 한 건씩."""
+    bar = common.Progress(len(requests), label)
+    out: list[dict] = []
+    try:
+        many = getattr(gen, "many", None)
+        if many is None:
+            for messages, tools, schema in requests:
+                out.append(gen(messages, tools=tools, schema=schema))
+                bar.step()
+        else:
+            for n_done, batch in many(requests):
+                out.extend(batch)
+                bar.step(n_done)
+    finally:
+        bar.close()
+    return out
+
+
+def check_batch_consistency(gen, chat_records: list[dict], analysis_records: list[dict], n: int = 8) -> dict:
+    """
+    묶음 생성 결과가 한 건씩 생성한 결과와 같은지 앞쪽 몇 건으로 확인합니다. (노트북 9번 평가 전에 한 번)
+    다른 건이 많으면 묶음 생성(왼쪽 패딩)이 이 모델에서 결과를 바꾸는 것이니 묶음 크기를 1 로 되돌립니다.
+    (아주 드물게 1~2건은 계산 순서 차이로 다를 수 있어, 4분의 1 넘게 다를 때만 되돌림)
+    """
+    if gen.batch_size <= 1:
+        return {"checked": 0}
+    tools = load_tools()
+    reqs = []
+    for r in pick_eval(chat_records, max(1, n // 2), chat_label):
+        (_, messages, _), *_ = chat_conversations(r, reply_ratio=0.0)
+        reqs.append((messages, tools, None))
+    if analysis_records:
+        for r in pick_eval(analysis_records, max(1, n - len(reqs)), analysis_label):
+            reqs.append((analysis_conversation(r)[1], None, prompts.ANALYSIS_JSON_SCHEMA))
+    batched = generate_all(gen, reqs, "[묶음 생성 확인] 묶어서")
+    single = [gen(m, tools=t, schema=s) for m, t, s in reqs]
+    same = sum(a["raw"] == b["raw"] for a, b in zip(batched, single))
+    print(f"[묶음 생성 확인] {len(reqs)}건 중 {same}건이 한 건씩 생성한 결과와 글자까지 같음 (묶음 크기 {gen.batch_size})")
+    if (len(reqs) - same) * 4 > len(reqs):
+        gen.batch_size = 1
+        print("  -> 다른 결과가 많아 묶음 생성을 끄고 한 건씩 생성합니다. (EVAL_BATCH = 1 과 같음)")
+    return {"checked": len(reqs), "same": same, "batch_size": gen.batch_size}
 
 
 def ollama_generator(model_name: str, url: str = "http://127.0.0.1:11434", num_ctx: int = 8192, timeout: int = 300):
@@ -290,9 +400,12 @@ def evaluate_chat(gen, chat_records: list[dict], limit: int | None = None, reply
     for r in recs:
         per_kind.setdefault(chat_label(r), [0, 0])
     mistakes: list[dict] = []
-    for r in common.progress(recs, f"{tag}챗봇 도구 호출"):
-        (task, messages, _target), *_ = chat_conversations(r, reply_ratio=0.0)
-        out = gen(messages, tools=tools)
+    requests = []
+    for r in recs:
+        (_task, messages, _target), *_ = chat_conversations(r, reply_ratio=0.0)
+        requests.append((messages, tools, None))
+    outs = generate_all(gen, requests, f"{tag}챗봇 도구 호출")
+    for r, out in zip(recs, outs):
         exp_tool, got_tool = r.get("tool"), out["tool"]
         confusion[(chat_label(r), got_tool or "(도구 없음)")] += 1
         c["n"] += 1
@@ -325,8 +438,8 @@ def evaluate_chat(gen, chat_records: list[dict], limit: int | None = None, reply
             replies.append(convs[0])
         if len(replies) >= reply_limit:
             break
-    for _, messages, target in common.progress(replies, f"{tag}챗봇 안내 문구"):
-        out = gen(messages, tools=tools)
+    outs = generate_all(gen, [(messages, tools, None) for _, messages, _ in replies], f"{tag}챗봇 안내 문구")
+    for (_, _messages, target), out in zip(replies, outs):
         reply_n += 1
         reply_ok += out["tool"] is None and out["text"] == target["content"]
 
@@ -353,9 +466,9 @@ def evaluate_analysis(gen, analysis_records: list[dict], limit: int | None = Non
     tag = f"[{label}] " if label else ""
     c = Counter()
     mistakes: list[dict] = []
-    for r in common.progress(recs, f"{tag}민원 분석"):
-        _, messages, _ = analysis_conversation(r)
-        out = gen(messages, schema=prompts.ANALYSIS_JSON_SCHEMA)
+    requests = [(analysis_conversation(r)[1], None, prompts.ANALYSIS_JSON_SCHEMA) for r in recs]
+    outs = generate_all(gen, requests, f"{tag}민원 분석")
+    for r, out in zip(recs, outs):
         c["n"] += 1
         c["plain_ok"] += is_plain_json(out["text"])
         c["truncated"] += bool(out.get("truncated"))
@@ -398,11 +511,9 @@ def evaluate_analysis(gen, analysis_records: list[dict], limit: int | None = Non
 def mode1_answers(gen) -> list[dict]:
     """모드 1(문의) - 학습하지 않은 모드가 망가지지 않았는지 눈으로 확인할 답변."""
     system = {"role": "system", "content": prompts.agent_system_prompt(prompts.AGENT_MODE_INQUIRY)}
-    rows = []
-    for q in MODE1_QUESTIONS:
-        out = gen([system, {"role": "user", "content": prompts.agent_user_message(q)}], tools=None)
-        rows.append({"질문": q, "답변": out["text"][:300], "도구": out["tool"]})
-    return rows
+    requests = [([system, {"role": "user", "content": prompts.agent_user_message(q)}], None, None) for q in MODE1_QUESTIONS]
+    outs = generate_all(gen, requests, "모드 1 답변")
+    return [{"질문": q, "답변": out["text"][:300], "도구": out["tool"]} for q, out in zip(MODE1_QUESTIONS, outs)]
 
 
 def compare_table(before: dict, after: dict) -> list[dict]:
@@ -444,10 +555,10 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--url", default="http://127.0.0.1:11434", help="[ollama] Ollama 주소")
     ap.add_argument("--lora-scale", type=float, default=1.0, help="[llama-server] 어댑터 세기. 1=학습 모델, 0=베이스 모델")
     ap.add_argument("--lora-id", type=int, default=0, help="[llama-server] 어댑터 순번 (첫 번째 --lora 가 0)")
-    ap.add_argument("--limit", type=int, default=300, help="챗봇 평가 레코드 수 (0 이면 전부)")
+    ap.add_argument("--limit", type=int, default=600, help="챗봇 평가 레코드 수 (기본 600 = 6종 x 100건, 노트북 EVAL_LIMIT 과 같게. 0 이면 전부)")
     ap.add_argument("--num-ctx", type=int, default=8192, help="[ollama] 컨텍스트 길이 (llama-server 는 서버 실행 옵션 -c 를 씀)")
-    ap.add_argument("--prompt-style", choices=list(prompts.ANALYSIS_PROMPT_STYLES), default=None,
-                    help="분석 프롬프트 길이 (long/short). 어댑터를 학습할 때 쓴 값과 같게. 생략하면 ANALYSIS_PROMPT_STYLE 환경변수(기본 long)")
+    ap.add_argument("--prompt-style", choices=list(prompts.ANALYSIS_PROMPT_STYLES), default="short",
+                    help="분석 프롬프트 길이 (long/short). 어댑터를 학습할 때 쓴 값과 같게 - 이 프로젝트는 short 로 통일 (기본 short)")
     a = ap.parse_args(argv)
     if a.prompt_style:
         import os
