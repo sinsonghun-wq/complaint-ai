@@ -17,7 +17,9 @@ from .ai import embeddingForSelect
 from .db import fetch_all
 from langgraph.checkpoint.memory import MemorySaver
 
-RAG_ROW_LIMIT = 2
+# RAG_ROW_LIMIT을 2 이상으로 하려면 csv를 row마다 쪼개서 집어 넣어야 가능할 것으로 보입니다.
+# context window 크기를 넘어서면 오류 없이 그냥 먹통이 됩니다.
+RAG_ROW_LIMIT = 1
 COMPLAINT_ROW_LIMIT = 3
 
 # --- 툴 정의 ---
@@ -121,14 +123,14 @@ async def llm_worker(llm, tools_dict):
                 
                 if kind == "on_chat_model_end":
                     output_message = event["data"].get("output")
+                    logger.info(output_message)
                     if hasattr(output_message, "content") and output_message.content:
-                        if not getattr(output_message, "tool_calls", None):
-                            final_message = output_message.content
+                        final_message = output_message.content
                 
                 elif kind == "on_tool_end":
                     tool_output = event["data"].get("output")
                     tool_name = event.get("name")
-                    logger.info(f"[{user_id}] Tool 호출됨 [{tool_name}] - 원본 반환값: {tool_output}")
+                    logger.info(f"[{user_id}] Tool 호출됨 [{tool_name}] - 원본 반환값: {str(tool_output)[:200]}")
                     
                     data = parse_tool_output_safe(tool_output)
                     if data:
@@ -136,8 +138,6 @@ async def llm_worker(llm, tools_dict):
                             final_code = data["code"]
                         if "result" in data and data["result"]:
                             final_result_list = data["result"]
-                        if "message" in data and data["message"]:
-                            tool_message = data["message"]
 
             if tool_message and not final_message:
                 final_message = tool_message

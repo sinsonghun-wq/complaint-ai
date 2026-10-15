@@ -417,7 +417,7 @@ export default function AIRecommendations({ recommendation, api = recommendation
               fontWeight: agentMode === 1 ? 'bold' : 'normal'
             }}
           >
-            대화모드
+            문의모드
           </button>
         </div>
 
@@ -443,7 +443,10 @@ export default function AIRecommendations({ recommendation, api = recommendation
         <span className="ai-chat-avatar" aria-hidden="true">AI</span>
         <div className="ai-chat-message-body"><span className="ai-chat-sender">민원 상담 도우미</span><div className="ai-chat-bubble"><p className="ai-message-text">
           안녕하세요! 어떤 도움이 필요하신가요?
-          { '\n' }민원처리모드에서는 민원의 접수, 조회, 수정, 삭제가 가능하고, 대화 모드에서는 민원과 관련된 문의를 제가 답변해드려요!
+          { '\n' }<b>민원처리모드</b>에서는 민원의 접수, 조회, 수정, 삭제가 가능하고
+          { '\n' }<b>문의 모드</b>에서는 민원과 관련된 문의를 제가 답변해드려요!
+          { '\n' }
+          { '\n' }<b>민원처리모드 기능</b>
           { '\n' }민원을 접수하고 싶은 경우 접수하고 싶은 민원의 구체적인 내용과 함께 접수하고 싶다고 말씀하시면 됩니다.
           { '\n' }민원을 조회, 수정, 삭제하고 싶으신 경우에는 찾고자 하는 민원의 구체적인 내용과 함께 그 민원을 찾고 싶다고 말씀하시면 됩니다.
           </p></div></div>
