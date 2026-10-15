@@ -1,0 +1,17 @@
+.complaint-filters { padding: 18px; border: 1px solid #dce6f5; border-radius: 12px; background: #fafcff; color: #26364f; }
+.complaint-filters h3 { margin: 0 0 16px; font-size: 15px; line-height: 1.7; }
+.complaint-filters fieldset { min-width: 0; margin: 0 0 16px; padding: 0; border: 0; }
+.complaint-filters legend { padding: 0; margin-bottom: 8px; color: #425b7b; font-size: 13px; font-weight: 700; }
+.complaint-filters fieldset > p { margin: 0 0 9px; color: #7a889d; font-size: 11px; line-height: 1.7; }
+.complaint-filters-departments, .complaint-filters-statuses { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+.complaint-filters label { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 12px; cursor: pointer; line-height: 1.6; }
+.complaint-filters input[type="checkbox"], .complaint-filters input[type="radio"] { flex: none; width: 15px; height: 15px; margin: 0; padding: 0; accent-color: #4c72ed; }
+.complaint-filters .complaint-filters-help { margin: 0 0 15px; color: #728198; font-size: 11px; line-height: 1.8; }
+.complaint-filters-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.complaint-filters-actions button { border: 1px solid #d6e0ee; border-radius: 8px; background: #fff; color: #64758f; font: inherit; font-size: 12px; padding: 8px 12px; cursor: pointer; }
+.complaint-filters-actions button[type="submit"] { background: #4c72ed; border-color: #4c72ed; color: #fff; }
+.complaint-filters-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.complaint-filters :is(button,input):focus-visible { outline: 2px solid #789af4; outline-offset: 3px; }
+.complaint-filters-compact { margin: 12px 0 16px; padding: 15px; }
+.complaint-filters-compact .complaint-filters-departments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+@media (max-width: 390px) { .complaint-filters-compact .complaint-filters-departments { grid-template-columns: 1fr; } }
