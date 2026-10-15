@@ -143,8 +143,8 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
     if (mutationLock.current) return;
     detailSequence.current += 1;
     commitSelected(null); setDeleteConfirm(false); setMode("create");
-    setTitle(draft?.title || request?.title || ""); 
-    setContent(draft?.content || request?.content || ""); 
+    setTitle(draft?.title || ""); 
+    setContent(draft?.content  || ""); 
     setError(""); setNotice(""); setLoading(false);
   }, [commitSelected, request]);
 
