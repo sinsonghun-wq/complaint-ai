@@ -7,6 +7,9 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
+from app.agent import enqueue_chat_request
+from app.models import ChatRequestBody, ChatResponseBody
+
 from .db import connection, fetch_one
 from .chat_intent import ChatIntentBody, ChatIntentResult, IntentUnavailable, classify_chat_intent
 from .complaint_search import router as complaint_search_router
@@ -102,14 +105,12 @@ def create(body: RecommendationBody, background: BackgroundTasks, actor: Annotat
     return row
 
 
-@router.post('/intent', response_model=ChatIntentResult)
-async def intent(body: ChatIntentBody, actor: Annotated[dict, Depends(actor_from_auth)]):
-    citizen(actor)
-    try:
-        return await classify_chat_intent(body)
-    except IntentUnavailable as exc:
-        logger.exception(exc)
-        raise HTTPException(503, str(exc)) from exc
+@router.post('/intent', response_model=ChatResponseBody)
+async def intent(chatBody: ChatRequestBody, actor: Annotated[dict, Depends(actor_from_auth)]):
+    user_id = actor["owner_id"]
+     # 큐에 요청을 넣고 워커가 처리 완료하여 Future에 결과를 담을 때까지 비동기 대기
+    result = await enqueue_chat_request(user_id, chatBody)
+    return result
 
 
 router.include_router(complaint_search_router)

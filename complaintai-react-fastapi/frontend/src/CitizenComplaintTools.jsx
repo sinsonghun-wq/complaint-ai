@@ -8,8 +8,6 @@ const editable = (record) => available(record) && record.complaint_status === "�
 const removable = (record) => available(record) && ["접수", "진행중"].includes(record.complaint_status);
 const jsonRequest = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
-// Closing this region only hides it: the parent should keep it mounted so that
-// a citizen's unsaved draft and selected complaint survive the tool toggle.
 export default function CitizenComplaintTools({ api, request, onContextChange, onChanged, onRecommend, onClose, visible = true, recommendationBusy = false }) {
   const [mode, setMode] = useState("list");
   const [selected, setSelected] = useState(null);
@@ -24,13 +22,14 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
   const [notice, setNotice] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [accessBlocked, setAccessBlocked] = useState(false);
-  const [listKind, setListKind] = useState("normal");
+  const [listKind, setListKind] = useState("normal"); // 'normal', 'search', 'chat_result'
   const [appliedFilters, setAppliedFilters] = useState(null);
   const [filterInitial, setFilterInitial] = useState(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [search, setSearch] = useState({ state: null, query: "", complaints: [], similar_complaints: [] });
   const [similarPage, setSimilarPage] = useState(1);
   const [processedRequest, setProcessedRequest] = useState(null);
+  
   const mutationLock = useRef(false);
   const listSequence = useRef(0);
   const detailSequence = useRef(0);
@@ -62,6 +61,7 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
     const next = typeof value === "function" ? value(searchRef.current) : value;
     searchRef.current = next; setSearch(next);
   }, []);
+
   const loadList = useCallback(async (targetPage, quiet = false) => {
     const sequence = ++listSequence.current;
     if (!quiet) setLoading(true);
@@ -130,8 +130,6 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
     if (mutationLock.current) return;
     const sequence = ++detailSequence.current;
     setError(""); setNotice(""); setLoading(true); setDeleteConfirm(false);
-    // Do not keep a previous complaint visible under a newly requested ID if
-    // the new request fails its ownership or existence check.
     commitSelected(null); setMode("list");
     try {
       const data = await api(`/api/complaints/${id}`);
@@ -145,8 +143,10 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
     if (mutationLock.current) return;
     detailSequence.current += 1;
     commitSelected(null); setDeleteConfirm(false); setMode("create");
-    setTitle(draft?.title || ""); setContent(draft?.content || ""); setError(""); setNotice(""); setLoading(false);
-  }, [commitSelected]);
+    setTitle(draft?.title || request?.title || ""); 
+    setContent(draft?.content || request?.content || ""); 
+    setError(""); setNotice(""); setLoading(false);
+  }, [commitSelected, request]);
 
   const showList = useCallback(() => {
     if (mutationLock.current) return;
@@ -182,9 +182,18 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
       const normalized = normalizeComplaintFilters(request.filters);
       if (normalized.departments.length && normalized.view_status) applyFilters(normalized);
       else { clearFilters(); setFilterInitial(normalized); setFiltersOpen(true); }
-    } else if (request.intent === "create") newComplaint(request.draft);
-    else if (request.complaint_id) selectRecord(request.complaint_id, request.intent);
-    else {
+    } else if (request.intent === "create") {
+      newComplaint(request.draft || { title: request.title, content: request.content });
+    } else if (request.intent === "list" && request.listKind === "chat_result") {
+      setListKind("chat_result");
+      setRecords(request.complaints || []);
+      setTotal((request.complaints || []).length);
+      setPage(1);
+      setFiltersOpen(false);
+      showList();
+    } else if (request.complaint_id) {
+      selectRecord(request.complaint_id, request.intent);
+    } else {
       setListKind("normal"); showList(); setPage(1);
       if (["edit", "delete"].includes(request.intent)) setNotice(request.intent === "edit" ? "수정할 민원을 선택한 다음 ‘민원 수정’을 눌러 주세요." : "삭제할 민원을 선택한 다음 ‘민원 삭제’를 눌러 주세요.");
     }
@@ -217,8 +226,6 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
     let data;
     try { data = await api(`/api/complaints/${current.id}`); }
     catch (failure) {
-      // Even an earlier readable snapshot must not remain actionable after a
-      // failed current access/status check. A later successful poll restores it.
       if (mounted.current && sequence === detailSequence.current && selectedRef.current?.id === current.id) { setAccessBlocked(true); setDeleteConfirm(false); }
       throw failure;
     }
@@ -273,8 +280,6 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
       const message = (result.message || (currentMode === "edit" ? "민원이 수정되었습니다." : currentMode === "follow-up" ? "이전 민원과 답변을 포함한 재민원이 접수되었습니다." : "민원이 접수되었습니다.")) + (searchChanged ? " 수정한 민원은 이전 검색 결과에서 제외했습니다. 다시 검색해 주세요." : "");
       setNotice(message);
       callbacks.current.onChanged?.({ action: currentMode === "edit" ? "edit" : currentMode === "follow-up" ? "follow-up" : "create", record, message });
-      // A successful POST must remain successful even if the later detail
-      // refresh fails. Never retry a completed mutation because of that read.
       if (record.id) refreshSelection().catch((failure) => { if (mounted.current) setError(`민원은 저장되었지만 최신 상태를 불러오지 못했습니다. ${failure.message}`); });
       if (listKindRef.current === "search") refreshSearch().catch((failure) => { if (mounted.current) setError(failure.message); });
     } catch (failure) {
@@ -299,7 +304,11 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
         searchReadSequence.current += 1;
         commitSearch((current) => ({ ...current, complaints: current.complaints.filter((item) => item.id !== record.id), similar_complaints: current.similar_complaints.filter((item) => item.id !== record.id) }));
         refreshSearch().catch((failure) => { if (mounted.current) setError(failure.message); });
-      } else loadList(1, true);
+      } else if (listKindRef.current === "chat_result") {
+        setRecords((current) => current.filter((item) => item.id !== record.id));
+      } else {
+        loadList(1, true);
+      }
     } catch (failure) {
       if (mounted.current) { setError(failure.message); await refreshSelection().catch(() => {}); }
     } finally { mutationLock.current = false; if (mounted.current) setBusy(false); }
@@ -315,60 +324,149 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
   const renderPagination = (count, currentPage, changePage, label = "") => <footer className="citizen-tools-pagination"><span>{count}건 · {currentPage}페이지</span><button type="button" aria-label={label ? `${label} 이전` : undefined} disabled={busy || loading || currentPage <= 1} onClick={() => changePage((current) => current - 1)}>이전</button><button type="button" aria-label={label ? `${label} 다음` : undefined} disabled={busy || loading || currentPage * pageSize >= count} onClick={() => changePage((current) => current + 1)}>다음</button></footer>;
 
   const searchLoading = listKind === "search" && search.state === "loading";
-  return <section className="citizen-tools" aria-label="민원 도구" hidden={!visible} aria-busy={busy || loading || searchLoading}>
-    <header className="citizen-tools-header"><div><span>챗봇과 함께 이용하기</span><h2>민원 도구</h2></div><button type="button" className="citizen-tools-close" aria-label="도구 창 닫기" onClick={onClose}>×</button></header>
-    <nav className="citizen-tools-tabs" aria-label="민원 도구 선택"><button type="button" aria-pressed={mode === "create"} disabled={busy || searchLoading} onClick={() => newComplaint()}>새 민원 작성</button><button type="button" aria-pressed={mode !== "create"} disabled={busy || searchLoading} onClick={() => { setListKind("normal"); showList(); }}>작성한 민원 확인</button></nav>
-    <div className="citizen-tools-body">
-      {error && <p className="citizen-tools-error" role="alert">{error}</p>}
-      {notice && <p className="citizen-tools-notice" role="status">{notice}</p>}
-      {accessBlocked && <p className="citizen-tools-muted" role="status">최신 민원 상태와 접근 권한을 확인하지 못했습니다. 다시 확인될 때까지 저장·삭제·AI 답변 기능을 사용할 수 없습니다.</p>}
-      {loading && <p className="citizen-tools-muted" role="status">민원을 불러오는 중입니다.</p>}
-      {inForm && <form onSubmit={submit} className="citizen-tools-form">
-        <h3>{mode === "edit" ? `민원 #${selected?.id} 수정` : mode === "follow-up" ? "완료 민원에 재민원 작성" : "새 민원 작성"}</h3>
-        <p className="citizen-tools-muted">오른쪽에서 작성하면서 챗봇에 문구나 필요한 정보를 물어보세요. 접수 버튼을 눌러야 실제 민원이 저장됩니다.</p>
-        {mode === "follow-up" && <PreviousContext context={{ title: selected?.title, content: selected?.content, response: selected?.latest_response, previous_context: selected?.previous_context }} />}
-        <label htmlFor="citizen-tools-title">도구 민원 제목<input id="citizen-tools-title" value={title} disabled={busy} onChange={(event) => setTitle(event.target.value)} /></label>
-        <label htmlFor="citizen-tools-content">도구 민원 내용<textarea id="citizen-tools-content" value={content} disabled={busy} required onChange={(event) => setContent(event.target.value)} placeholder="발생 장소, 시각, 상황과 요청 사항을 적어 주세요." /></label>
-        {mode === "edit" && !editable(selected) && <p className="citizen-tools-error">접수 대기 상태의 민원만 수정할 수 있습니다.</p>}
-        {mode === "follow-up" && (!available(selected) || selected.complaint_status !== "완료") && <p className="citizen-tools-error">답변이 완료된 민원에만 재민원을 작성할 수 있습니다.</p>}
-        <div className="citizen-tools-actions"><button type="submit" className="citizen-tools-primary" disabled={busy || accessBlocked || !content.trim() || (mode === "edit" && !editable(selected)) || (mode === "follow-up" && (!available(selected) || selected.complaint_status !== "완료"))}>{busy ? "저장 중..." : mode === "edit" ? "수정 저장" : mode === "follow-up" ? "재민원 접수" : "민원 접수"}</button>{mode !== "create" && <button type="button" disabled={busy} onClick={() => { setMode("detail"); setError(""); setNotice(""); }}>{mode === "edit" ? "수정 취소" : "재민원 작성 취소"}</button>}</div>
-        <button type="button" className="citizen-tools-ai" disabled={busy || accessBlocked || recommendationBusy || !content.trim() || !title.trim()} onClick={() => callbacks.current.onRecommend?.(recommendationRecord())}>작성 내용으로 AI 답변 보기</button>
-      </form>}
-      {mode === "list" && <div className="citizen-tools-list"><div className="citizen-tools-list-heading"><h3>{listKind === "search" ? "검색된 민원" : "내 민원 목록"}</h3><div className="citizen-tools-list-options"><button type="button" aria-expanded={filtersOpen} disabled={busy || (listKind === "search" && search.state === "loading")} onClick={() => setFiltersOpen((current) => !current)}>조회 옵션</button><button type="button" disabled={busy || loading || (listKind === "search" && search.state !== "complete")} onClick={() => { setError(""); if (listKind === "search") refreshSearch(); else loadList(page); }}>새로고침</button></div></div>
-        {filtersOpen && <ComplaintFilters initialValue={filterInitial || appliedFilters} onApply={applyFilters} onClear={clearFilters} busy={busy || loading} compact />}
-        {listKind === "normal" && <>
-          {appliedFilters && <p className="citizen-tools-filter-summary" role="status">조회 조건: {appliedFilters.departments.join(", ")} · {({ unassigned: "미접수", in_progress: "접수 중", completed: "접수 완료" })[appliedFilters.view_status]}</p>}
-          {!loading && records.length === 0 && <p className="citizen-tools-muted">작성한 민원이 없습니다.</p>}
-          {renderRows(records)}{renderPagination(total, page, setPage)}
-        </>}
-        {listKind === "search" && <>
-          <p className="citizen-tools-search-query">검색 내용: {search.query}</p>
-          {search.state === "loading" && <div className="citizen-tools-search-loading" role="status"><span aria-hidden="true" />관련 민원을 검색하고 있습니다.</div>}
-          {search.state === "failed" && <p className="citizen-tools-muted">채팅에서 검색을 다시 요청해 주세요.</p>}
-          {search.state === "complete" && <>
-            <section aria-label="검색된 민원" className="citizen-tools-search-results">{search.complaints.length ? renderRows(search.complaints.slice((page - 1) * pageSize, page * pageSize)) : <p className="citizen-tools-muted">검색 내용에 해당하는 민원이 없습니다.</p>}{renderPagination(search.complaints.length, page, setPage, "검색된 민원")}</section>
-            <section aria-label="검색과 유사한 민원" className="citizen-tools-search-similar"><h3>검색과 유사한 민원</h3>{search.similar_complaints.length ? renderRows(search.similar_complaints.slice((similarPage - 1) * pageSize, similarPage * pageSize)) : <p className="citizen-tools-muted">추가로 표시할 유사 민원이 없습니다.</p>}{renderPagination(search.similar_complaints.length, similarPage, setSimilarPage, "검색과 유사한 민원")}</section>
-          </>}
-        </>}
-      </div>}
-      {mode === "detail" && selected && <article className="citizen-tools-detail"><div className="citizen-tools-detail-heading"><h3>{selected.title || `민원 #${selected.id}`}</h3><span>#{selected.id} · {citizenViewStatusLabel(selected)}</span></div>
-        <p className="citizen-tools-muted">{selected.category || "담당 부서 판별 중"}{selected.analysis_state === "pending" || selected.analysis_state === "processing" ? " · 민원 분석 중" : ""}</p>
-        {!available(selected) ? <div className="citizen-tools-cancellation"><strong>민원이 취소되었습니다.</strong><p>{selected.cancelled_by_role === "user" ? "민원인이 해당 민원을 취소했습니다." : selected.cancellation_reason || "취소 사유가 기록되지 않았습니다."}</p></div> : <>
-          <h4>민원 내용</h4><p className="citizen-tools-original">{selected.content}</p><PreviousContext context={selected.previous_context} />
-          {selected.latest_response && selected.latest_response_state === "sent" && <div className="citizen-tools-answer"><h4>공식 처리 답변</h4><p className="citizen-tools-original">{selected.latest_response}</p></div>}
-          {!selected.latest_response && <p className="citizen-tools-muted">아직 전달된 공식 답변이 없습니다.</p>}
-          <div className="citizen-tools-actions">{editable(selected) && <button type="button" disabled={busy || accessBlocked} onClick={() => { setError(""); setNotice(""); applyIntent(selected, "edit"); }}>민원 수정</button>}{removable(selected) && <button type="button" className="citizen-tools-danger" disabled={busy || accessBlocked} onClick={() => { setDeleteConfirm(true); setError(""); }}>민원 삭제</button>}{selected.complaint_status === "완료" && <button type="button" disabled={busy || accessBlocked} onClick={startFollowUp}>재민원 작성</button>}</div>
-          {selected.complaint_status === "진행중" && <p className="citizen-tools-muted">관리자가 접수를 시작하여 수정할 수 없습니다.</p>}
-          <button type="button" className="citizen-tools-ai" disabled={busy || accessBlocked || recommendationBusy} onClick={() => callbacks.current.onRecommend?.(selected)}>이 민원으로 AI 답변 보기</button>
-        </>}
-        {deleteConfirm && removable(selected) && <section className="citizen-tools-confirm" role="dialog" aria-label="민원 삭제 확인"><h4>이 민원을 삭제할까요?</h4><p>민원이 취소되며 작성한 민원 목록에서 제외됩니다.</p><div className="citizen-tools-actions"><button type="button" className="citizen-tools-danger" disabled={busy} onClick={confirmDelete}>{busy ? "삭제 중..." : "삭제 확인"}</button><button type="button" disabled={busy} onClick={() => setDeleteConfirm(false)}>삭제 취소</button></div></section>}
-        <button type="button" className="citizen-tools-back" disabled={busy} onClick={showList}>목록으로 돌아가기</button>
-      </article>}
-    </div>
-  </section>;
+  return (
+    <section className="citizen-tools" aria-label="민원 도구" hidden={!visible} aria-busy={busy || loading || searchLoading}>
+      <header className="citizen-tools-header">
+        <div><span>챗봇과 함께 이용하기</span><h2>민원 도구</h2></div>
+        <button type="button" className="citizen-tools-close" aria-label="도구 창 닫기" onClick={onClose}>×</button>
+      </header>
+      <nav className="citizen-tools-tabs" aria-label="민원 도구 선택">
+        <button type="button" aria-pressed={mode === "create"} disabled={busy || searchLoading} onClick={() => newComplaint()}>새 민원 작성</button>
+        <button type="button" aria-pressed={mode !== "create"} disabled={busy || searchLoading} onClick={() => { setListKind("normal"); showList(); }}>작성한 민원 확인</button>
+      </nav>
+      <div className="citizen-tools-body">
+        {error && <p className="citizen-tools-error" role="alert">{error}</p>}
+        {notice && <p className="citizen-tools-notice" role="status">{notice}</p>}
+        {accessBlocked && <p className="citizen-tools-muted" role="status">최신 민원 상태와 접근 권한을 확인하지 못했습니다. 다시 확인될 때까지 저장·삭제·AI 답변 기능을 사용할 수 없습니다.</p>}
+        {loading && <p className="citizen-tools-muted" role="status">민원을 불러오는 중입니다.</p>}
+        {inForm && (
+          <form onSubmit={submit} className="citizen-tools-form">
+            <h3>{mode === "edit" ? `민원 #${selected?.id} 수정` : mode === "follow-up" ? "완료 민원에 재민원 작성" : "새 민원 작성"}</h3>
+            <p className="citizen-tools-muted">오른쪽에서 작성하면서 챗봇에 문구나 필요한 정보를 물어보세요. 접수 버튼을 눌러야 실제 민원이 저장됩니다.</p>
+            {mode === "follow-up" && <PreviousContext context={{ title: selected?.title, content: selected?.content, response: selected?.latest_response, previous_context: selected?.previous_context }} />}
+            <label htmlFor="citizen-tools-title">도구 민원 제목<input id="citizen-tools-title" value={title} disabled={busy} onChange={(event) => setTitle(event.target.value)} /></label>
+            <label htmlFor="citizen-tools-content">도구 민원 내용<textarea id="citizen-tools-content" value={content} disabled={busy} required onChange={(event) => setContent(event.target.value)} placeholder="발생 장소, 시각, 상황과 요청 사항을 적어 주세요." /></label>
+            {mode === "edit" && !editable(selected) && <p className="citizen-tools-error">접수 대기 상태의 민원만 수정할 수 있습니다.</p>}
+            {mode === "follow-up" && (!available(selected) || selected.complaint_status !== "완료") && <p className="citizen-tools-error">답변이 완료된 민원에만 재민원을 작성할 수 있습니다.</p>}
+            <div className="citizen-tools-actions">
+              <button type="submit" className="citizen-tools-primary" disabled={busy || accessBlocked || !content.trim() || (mode === "edit" && !editable(selected)) || (mode === "follow-up" && (!available(selected) || selected.complaint_status !== "완료"))}>{busy ? "저장 중..." : mode === "edit" ? "수정 저장" : mode === "follow-up" ? "재민원 접수" : "민원 접수"}</button>
+              {mode !== "create" && <button type="button" disabled={busy} onClick={() => { setMode("detail"); setError(""); setNotice(""); }}>{mode === "edit" ? "수정 취소" : "재민원 작성 취소"}</button>}
+            </div>
+            <button type="button" className="citizen-tools-ai" disabled={busy || accessBlocked || recommendationBusy || !content.trim() || !title.trim()} onClick={() => callbacks.current.onRecommend?.(recommendationRecord())}>작성 내용으로 AI 답변 보기</button>
+          </form>
+        )}
+        {mode === "list" && (
+          <div className="citizen-tools-list">
+            <div className="citizen-tools-list-heading">
+              <h3>{listKind === "search" ? "검색된 민원" : listKind === "chat_result" ? "조회된 민원 목록" : "내 민원 목록"}</h3>
+              <div className="citizen-tools-list-options">
+                <button type="button" aria-expanded={filtersOpen} disabled={busy || (listKind === "search" && search.state === "loading")} onClick={() => setFiltersOpen((current) => !current)}>조회 옵션</button>
+                <button type="button" disabled={busy || loading || (listKind === "search" && search.state !== "complete")} onClick={() => { setError(""); if (listKind === "search") refreshSearch(); else if (listKind === "chat_result") {} else loadList(page); }}>새로고침</button>
+              </div>
+            </div>
+            {filtersOpen && <ComplaintFilters initialValue={filterInitial || appliedFilters} onApply={applyFilters} onClear={clearFilters} busy={busy || loading} compact />}
+            {listKind === "normal" && (
+              <>
+                {appliedFilters && <p className="citizen-tools-filter-summary" role="status">조회 조건: {appliedFilters.departments.join(", ")} · {({ unassigned: "미접수", in_progress: "접수 중", completed: "접수 완료" })[appliedFilters.view_status]}</p>}
+                {!loading && records.length === 0 && <p className="citizen-tools-muted">작성한 민원이 없습니다.</p>}
+                {renderRows(records)}
+                {renderPagination(total, page, setPage)}
+              </>
+            )}
+            {listKind === "chat_result" && (
+              <>
+                {records.length === 0 && <p className="citizen-tools-muted">조회된 민원이 없습니다.</p>}
+                {renderRows(records.slice((page - 1) * pageSize, page * pageSize))}
+                {renderPagination(records.length, page, setPage, "조회된 민원")}
+              </>
+            )}
+            {listKind === "search" && (
+              <>
+                <p className="citizen-tools-search-query">검색 내용: {search.query}</p>
+                {search.state === "loading" && <div className="citizen-tools-search-loading" role="status"><span aria-hidden="true" />관련 민원을 검색하고 있습니다.</div>}
+                {search.state === "failed" && <p className="citizen-tools-muted">채팅에서 검색을 다시 요청해 주세요.</p>}
+                {search.state === "complete" && (
+                  <>
+                    <section aria-label="검색된 민원" className="citizen-tools-search-results">
+                      {search.complaints.length ? renderRows(search.complaints.slice((page - 1) * pageSize, page * pageSize)) : <p className="citizen-tools-muted">검색 내용에 해당하는 민원이 없습니다.</p>}
+                      {renderPagination(search.complaints.length, page, setPage, "검색된 민원")}
+                    </section>
+                    <section aria-label="검색과 유사한 민원" className="citizen-tools-search-similar">
+                      <h3>검색과 유사한 민원</h3>
+                      {search.similar_complaints.length ? renderRows(search.similar_complaints.slice((similarPage - 1) * pageSize, similarPage * pageSize)) : <p className="citizen-tools-muted">추가로 표시할 유사 민원이 없습니다.</p>}
+                      {renderPagination(search.similar_complaints.length, similarPage, setSimilarPage, "검색과 유사한 민원")}
+                    </section>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
+        {mode === "detail" && selected && (
+          <article className="citizen-tools-detail">
+            <div className="citizen-tools-detail-heading">
+              <h3>{selected.title || `민원 #${selected.id}`}</h3>
+              <span>#{selected.id} · {citizenViewStatusLabel(selected)}</span>
+            </div>
+            <p className="citizen-tools-muted">{selected.category || "담당 부서 판별 중"}{selected.analysis_state === "pending" || selected.analysis_state === "processing" ? " · 민원 분석 중" : ""}</p>
+            {!available(selected) ? (
+              <div className="citizen-tools-cancellation">
+                <strong>민원이 취소되었습니다.</strong>
+                <p>{selected.cancelled_by_role === "user" ? "민원인이 해당 민원을 취소했습니다." : selected.cancellation_reason || "취소 사유가 기록되지 않았습니다."}</p>
+              </div>
+            ) : (
+              <>
+                <h4>민원 내용</h4>
+                <p className="citizen-tools-original">{selected.content}</p>
+                <PreviousContext context={selected.previous_context} />
+                {selected.latest_response && selected.latest_response_state === "sent" && (
+                  <div className="citizen-tools-answer">
+                    <h4>공식 처리 답변</h4>
+                    <p className="citizen-tools-original">{selected.latest_response}</p>
+                  </div>
+                )}
+                {!selected.latest_response && <p className="citizen-tools-muted">아직 전달된 공식 답변이 없습니다.</p>}
+                <div className="citizen-tools-actions">
+                  {editable(selected) && <button type="button" disabled={busy || accessBlocked} onClick={() => { setError(""); setNotice(""); applyIntent(selected, "edit"); }}>민원 수정</button>}
+                  {removable(selected) && <button type="button" className="citizen-tools-danger" disabled={busy || accessBlocked} onClick={() => { setDeleteConfirm(true); setError(""); }}>민원 삭제</button>}
+                  {selected.complaint_status === "완료" && <button type="button" disabled={busy || accessBlocked} onClick={startFollowUp}>재민원 작성</button>}
+                </div>
+                {selected.complaint_status === "진행중" && <p className="citizen-tools-muted">관리자가 접수를 시작하여 수정할 수 없습니다.</p>}
+                <button type="button" className="citizen-tools-ai" disabled={busy || accessBlocked || recommendationBusy} onClick={() => callbacks.current.onRecommend?.(selected)}>이 민원으로 AI 답변 보기</button>
+              </>
+            )}
+            {deleteConfirm && removable(selected) && (
+              <section className="citizen-tools-confirm" role="dialog" aria-label="민원 삭제 확인">
+                <h4>이 민원을 삭제할까요?</h4>
+                <p>민원이 취소되며 작성한 민원 목록에서 제외됩니다.</p>
+                <div className="citizen-tools-actions">
+                  <button type="button" className="citizen-tools-danger" disabled={busy} onClick={confirmDelete}>{busy ? "삭제 중..." : "삭제 확인"}</button>
+                  <button type="button" disabled={busy} onClick={() => setDeleteConfirm(false)}>삭제 취소</button>
+                </div>
+              </section>
+            )}
+            <button type="button" className="citizen-tools-back" disabled={busy} onClick={showList}>목록으로 돌아가기</button>
+          </article>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function PreviousContext({ context, depth = 0 }) {
   if (!context || depth >= 5) return null;
-  return <details className="citizen-tools-previous"><summary>이전 민원과 답변</summary><strong>{context.title}</strong><p className="citizen-tools-original">{context.content}</p>{context.response && <><b>이전 공식 답변</b><p className="citizen-tools-original">{context.response}</p></>}<PreviousContext context={context.previous_context} depth={depth + 1} /></details>;
+  return (
+    <details className="citizen-tools-previous">
+      <summary>이전 민원과 답변</summary>
+      <strong>{context.title}</strong>
+      <p className="citizen-tools-original">{context.content}</p>
+      {context.response && (
+        <>
+          <b>이전 공식 답변</b>
+          <p className="citizen-tools-original">{context.response}</p>
+        </>
+      )}
+      <PreviousContext context={context.previous_context} depth={depth + 1} />
+    </details>
+  );
 }
