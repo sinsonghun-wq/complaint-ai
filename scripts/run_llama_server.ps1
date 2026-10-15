@@ -5,7 +5,7 @@
 #   민원 분석·챗봇 -> 어댑터 켬 / CSV 열 매핑 -> 베이스 모델   (.env 의 LLM_ADAPTER_TASKS)
 #
 # 준비물 (Colab 노트북 11-B 에서 내려받은 파일)
-#   model-training/modelfiles/llama-server/gemma-4-E4B-it-q8_0.gguf           <- 베이스 (한 번 만들면 계속 씀)
+#   model-training/modelfiles/llama-server/gemma-4-E4B-it-Q4_K_M.gguf         <- 베이스 (한 번 만들면 계속 씀. 11-B 가 bf16 -> Q4_K_M 으로 만듦)
 #   model-training/modelfiles/llama-server/complaint-lora-<RUN_NAME>-f16.gguf  <- 어댑터 (학습할 때마다 새로)
 # llama-server.exe : https://github.com/ggml-org/llama.cpp/releases 에서 GPU 에 맞는 Windows 빌드
 #                    (NVIDIA 면 cuda 빌드, 그 외 vulkan 빌드)를 받아 압축을 풉니다. Gemma 4 를 지원하는 최근 빌드여야 합니다.
@@ -36,7 +36,7 @@ if (-not $ProjectRoot) {
     $ProjectRoot = Split-Path -Parent $scriptDir
 }
 if (-not $BaseModel) {
-    $BaseModel = Join-Path $ProjectRoot "model-training\modelfiles\llama-server\gemma-4-E4B-it-q8_0.gguf"
+    $BaseModel = Join-Path $ProjectRoot "model-training\modelfiles\llama-server\gemma-4-E4B-it-Q4_K_M.gguf"
 }
 foreach ($file in @($BaseModel, $Adapter)) {
     if (-not (Test-Path -LiteralPath $file)) { throw "파일을 찾지 못했습니다: $file" }

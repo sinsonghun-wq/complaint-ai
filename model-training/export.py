@@ -306,11 +306,13 @@ def to_lora_gguf(adapter_dir: str | Path, base_dir: str | Path, out_file: str | 
 
 def export_llama_server(adapter_dir: str | Path, run_name: str, make_base: bool = True, base_outtype: str = "q8_0",
                         lora_outtype: str = "f16", adapter_name: str = "complaint-lora",
-                        work_dir: str | Path | None = None, to_drive: bool = True) -> dict:
+                        work_dir: str | Path | None = None, to_drive: bool = True, base_file: str | None = None) -> dict:
     """
     노트북에서 한 번에: (베이스 GGUF) + 어댑터 GGUF.
       make_base  : True 면 베이스 GGUF 도 만듭니다 (처음 한 번, 15~30분). PC 에 이미 있으면 False - 어댑터만 1~2분
                    같은 베이스(common.BASE_MODEL)로 학습하는 동안은 베이스 GGUF 를 계속 같이 씁니다.
+      base_file  : make_base=False 일 때 PC 에서 쓰는 베이스 GGUF 파일 이름 (실행 안내·info json 에 들어감).
+                   예: 'gemma-4-E4B-it-Q4_K_M.gguf' (PC 에서 만든 베이스). 비우면 base_outtype 으로 이름을 정함
       결과는 to_drive 면 model-training/modelfiles/llama-server/, 아니면 work_dir/out/ 에 모입니다. (Colab 은 로컬 디스크 권장)
     """
     from trainer import now_kst
@@ -326,7 +328,7 @@ def export_llama_server(adapter_dir: str | Path, run_name: str, make_base: bool 
 
     stage(1, "llama.cpp 변환 스크립트 준비 (1~3분)")
     llama_cpp = ensure_llama_cpp(work)
-    base_name = base_gguf_name(base_outtype)
+    base_name = base_gguf_name(base_outtype) if make_base or not base_file else base_file
     n = 2
     if make_base:
         stage(n, f"베이스 GGUF 만들기 ({base_outtype}) - 베이스 다운로드 + 변환 (15~30분)")

@@ -6,12 +6,12 @@ complaint-ai 의 LLM(`dcm-back`)을 Gemma 4 E4B(`google/gemma-4-E4B-it` = Ollama
 | 방식 | 내보내기 | 앱에서 |
 |---|---|---|
 | `ollama` | 노트북 11번 - 어댑터를 **병합**한 GGUF + Modelfile | 모든 작업이 병합 모델 하나를 씀 (CSV 열 매핑만 `CSV_MAPPING_LLM_MODEL` 로 다른 모델 지정 가능) |
-| `llama_server` | 노트북 11-B - **베이스 GGUF + 어댑터 GGUF** (병합 안 함) | llama-server 에 베이스 하나만 올리고, 요청마다 어댑터를 켜고 끔. 기본은 분석·챗봇 = 켬, CSV 열 매핑 = 베이스 (`LLM_ADAPTER_TASKS`) |
+| `llama_server` (**지금 쓰는 방식**) | 노트북 11-B - **어댑터 GGUF(f16)만** 받음. 베이스 GGUF(Q4_K_M)는 PC 에서 만들어 씀 (병합 안 함) | llama-server 에 베이스 하나만 올리고, 요청마다 어댑터를 켜고 끔. 기본은 분석·챗봇 = 켬, CSV 열 매핑 = 베이스 (`LLM_ADAPTER_TASKS`) |
 
 | 학습 대상 | 앱의 위치 | 데이터 |
 |---|---|---|
-| 챗봇 모드 0 - 도구 선택·인자·안내 문구 | `dcm-back/app/agent.py` | `data/chat_records.jsonl` (6,077건 - backend 5,058 + A3 150 + 균형 보강 869) |
-| 민원 분석 - 카테고리·요약·핵심어 JSON | `dcm-back/app/ai.py` 의 `analyze()` | `data/analysis_records.jsonl` (407건) |
+| 챗봇 모드 0 - 도구 선택·인자·안내 문구 | `dcm-back/app/agent.py` | `data/chat_records.jsonl` (2,601건 - 아래 "데이터 현황") |
+| 민원 분석 - 카테고리·요약·핵심어 JSON | `dcm-back/app/ai.py` 의 `analyze()` | `data/analysis_records.jsonl` (862건) |
 
 챗봇 모드 1(문의)은 학습하지 않습니다. 정답 기준은 `data/label_guide.md` 에 있습니다.
 
@@ -24,7 +24,7 @@ complaint-ai 의 LLM(`dcm-back`)을 Gemma 4 E4B(`google/gemma-4-E4B-it` = Ollama
                             ▼
 [PC]    ollama create complaint-gemma4 -f Modelfile → evaluate.py --ollama 로 평가 → .env 의 LLM_MODEL 변경
         또는
-[Colab] 11-B : 베이스 GGUF(처음 한 번) + 어댑터 GGUF
+[Colab] 11-B : 어댑터 GGUF 만 (베이스 Q4_K_M 은 PC 에서 만든 것을 계속 씀)
 [PC]    scripts/run_llama_server.ps1 → evaluate.py --llama-server 로 평가 → .env 의 LLM_BACKEND=llama_server
 ```
 
@@ -69,7 +69,7 @@ best 체크포인트·early stopping 은 전체 기준이고, 노트북 8번 그
 
 ### 분석 프롬프트 길이: long / short
 
-분석 프롬프트는 두 가지가 있고 환경변수 `ANALYSIS_PROMPT_STYLE` 로 고릅니다. (기본 `long`)
+분석 프롬프트는 두 가지가 있고 환경변수 `ANALYSIS_PROMPT_STYLE` 로 고릅니다. **이 프로젝트는 `short` 로 통일합니다.** (앱 `.env`, 노트북 4번 셀, `evaluate.py --prompt-style` 기본값 모두 `short`)
 
 | 값 | 내용 | 프롬프트 버전 |
 |---|---|---|
@@ -78,10 +78,12 @@ best 체크포인트·early stopping 은 전체 기준이고, 노트북 8번 그
 
 **학습과 실행의 값이 같아야 합니다.** 짧은 프롬프트로 학습한 어댑터를 긴 프롬프트로 부르면(또는 그 반대) 점수가 떨어집니다.
 
-- 학습: 노트북 4번 셀의 `ANALYSIS_PROMPT_STYLE = 'long'` 을 `'short'` 로 바꿉니다. `run_info.json` 에 `analysis_prompt_style`, `prompt_version` 이 남습니다.
-- 평가: `python model-training\evaluate.py --llama-server http://127.0.0.1:8080 --prompt-style short` (결과 파일 이름 끝에 `_short`)
+- 학습: 노트북 4번 셀의 `ANALYSIS_PROMPT_STYLE = 'short'` (기본값). `run_info.json` 에 `analysis_prompt_style`, `prompt_version` 이 남습니다.
+- 평가: `python model-training\evaluate.py --llama-server http://127.0.0.1:8080` - `--prompt-style` 기본이 `short` (결과 파일 이름 끝에 `_short`). long 으로 학습한 예전 어댑터를 잴 때만 `--prompt-style long`
 - 앱: `dcm-back/.env` 에 `ANALYSIS_PROMPT_STYLE=short`. 서버 시작 로그에 스타일이 찍히고, short 인데 분석에 어댑터가 꺼져 있으면 경고가 나옵니다.
 - 베이스 모델(어댑터 끔)로 분석할 때는 `long` 을 쓰세요. 짧은 프롬프트에는 규칙이 없어 베이스 모델이 규칙을 모릅니다.
+  그래서 노트북 6-1(학습 전 평가)과 `--lora-scale 0` 평가의 분석 점수는 short 에서 낮게 나오는 것이 정상입니다. (어댑터가 규칙을 얼마나 배웠는지 보는 기준선)
+- `dcm-back/app/prompts.py` 는 환경변수가 없을 때만 `long` 을 씁니다. 앱은 `.env` 의 값을 쓰므로 `.env` 에 `ANALYSIS_PROMPT_STYLE=short` 가 있는지 확인하세요.
 
 ## Colab 준비
 
@@ -93,10 +95,10 @@ best 체크포인트·early stopping 은 전체 기준이고, 노트북 8번 그
 | GPU | 비고 |
 |---|---|
 | T4 (무료) | bfloat16 이 없어 float16 으로 돌아 loss 가 nan 이 될 수 있음 - 비권장 |
-| **L4** | 권장. 4번 셀의 `batch_size=4, grad_accum=2` 기본값 |
-| A100 | 가장 빠름 |
+| **L4** | 권장. 4번 셀 기본값 `batch_size=2, grad_accum=4` (분석 프롬프트가 길어 메모리 여유를 둠) |
+| A100 | 가장 빠름. `batch_size=4, grad_accum=2` 로 올려도 됨 |
 
-메모리가 부족하면(`CUDA out of memory`) `batch_size=2, grad_accum=4` 로 바꾸세요. (곱이 8 로 같으면 학습 결과는 같음)
+메모리가 부족하면(`CUDA out of memory`) `batch_size=1, grad_accum=8` 로 바꾸세요. (곱이 8 로 같으면 학습 결과는 같음)
 
 ## PC 에서 Ollama 등록·평가
 
@@ -106,7 +108,7 @@ ollama create complaint-gemma4 -f Modelfile
 # GGUF 를 bf16 으로 만들었다면:  ollama create complaint-gemma4 -f Modelfile --quantize q4_K_M
 
 # 저장소 루트에서 (dcm-back 가상환경)
-python model-training\evaluate.py --ollama complaint-gemma4:latest --limit 300
+python model-training\evaluate.py --ollama complaint-gemma4:latest --limit 600
 ```
 
 - 노트북 9번(HF 모델) 결과와 비슷하면 정상입니다. **Ollama 쪽 점수가 크게 낮으면** Ollama 가 프롬프트를 학습 때와 다르게
@@ -115,7 +117,7 @@ python model-training\evaluate.py --ollama complaint-gemma4:latest --limit 300
 
 ## PC 에서 llama-server 실행·평가 (베이스 + 어댑터)
 
-준비: 노트북 11-B 에서 받은 `gemma-4-E4B-it-q8_0.gguf`(베이스, 처음 한 번)와 `complaint-lora-<RUN_NAME>-f16.gguf`(어댑터)를
+준비: PC 에서 파워셸로 만든 `gemma-4-E4B-it-Q4_K_M.gguf`(베이스, `dcm-back/README.md` 6번)와 노트북 11-B 에서 받은 `complaint-lora-<RUN_NAME>-f16.gguf`(어댑터)를
 `model-training/modelfiles/llama-server/` 에 둡니다. `llama-server.exe` 는 [llama.cpp 릴리스](https://github.com/ggml-org/llama.cpp/releases)의
 Windows 빌드(NVIDIA 는 cuda)를 씁니다. Gemma 4 를 지원하는 최근 빌드여야 합니다.
 
@@ -126,8 +128,8 @@ Windows 빌드(NVIDIA 는 cuda)를 씁니다. Gemma 4 를 지원하는 최근 �
 curl http://127.0.0.1:8080/lora-adapters      # [{"id":0, ..., "scale":0.0}] 이면 정상
 
 # 같은 서버에서 어댑터 켬(학습 모델) / 끔(베이스) 을 각각 평가
-python model-training\evaluate.py --llama-server http://127.0.0.1:8080 --limit 300
-python model-training\evaluate.py --llama-server http://127.0.0.1:8080 --lora-scale 0 --limit 300
+python model-training\evaluate.py --llama-server http://127.0.0.1:8080 --limit 600
+python model-training\evaluate.py --llama-server http://127.0.0.1:8080 --lora-scale 0 --limit 600
 ```
 
 - 어댑터 켬 점수가 노트북 9번(학습 후)과, 끔 점수가 6-1번(학습 전)과 비슷하면 정상입니다.
@@ -157,10 +159,17 @@ python model-training\evaluate.py --llama-server http://127.0.0.1:8080 --lora-sc
   통과시키지는 않습니다. 요약에 숫자가 없으면 분모에 들어가지 않습니다. 틀린 예는 `_틀린 예` 에 `요약에 원문에 없는 숫자` 로 남습니다.
 
 평가 레코드는 `records.pick_balanced()` 로 정답 종류(챗봇 6종, 분석: 카테고리 7종)별로 **같은 수**만큼 고릅니다. (반복 없음)
+
+**묶음 생성 (`EVAL_BATCH`, 기본 8)**: 노트북(HF 모델) 평가는 여러 문장을 묶어 생성해 한 건씩보다 몇 배 빠릅니다. 레코드·채점은 그대로라 점수 비교에 영향이 없습니다.
+- GPU 메모리가 모자라면 멈추지 않고 묶음 크기를 반씩 줄여(8 → 4 → 2 → 1) 다시 생성합니다.
+- 세션의 첫 평가 전에 8건을 묶음/한 건씩 두 번 생성해 결과가 같은지 확인하고, 4분의 1 넘게 다르면 자동으로 한 건씩(1) 생성합니다.
+- PC 의 Ollama·llama-server 평가는 지금처럼 한 건씩 요청합니다.
+- 노트북은 학습 직후 **어댑터를 먼저 저장(8-1)** 하고 평가(9)합니다. 평가 점수는 끝난 뒤 `run_info.json` 에 덧붙입니다.
 챗봇 결과의 `_종류별 도구 선택(맞음/전체)` 로 거절이 도구 호출로 쏠리는지 등을 확인하세요.
 
-평가셋은 레코드의 group 해시로 정해지므로(데이터를 더 넣어도 바뀌지 않음) 학습 전후·HF/Ollama 결과를 공정하게 비교할 수 있습니다.
-v8 에서 챗봇 레코드를 정리하며 평가셋도 줄었으니(1,018 → 389건), 예전 어댑터와 비교할 때는 **둘 다 지금 데이터 파일로** 평가하세요.
+평가셋은 레코드의 group 해시(또는 레코드에 적은 `split`)로 정해지므로 학습 전후·HF/Ollama 결과를 공정하게 비교할 수 있습니다.
+노트북 `EVAL_LIMIT` 과 PC 의 `--limit` 은 같은 값(기본 600)으로 두세요. 600 이면 챗봇 6종 x 100건, 분석은 한도와 상관없이 test 280건 전부입니다.
+평가셋이 바뀐 적이 있으니(v8 정리: 챗봇 1,018 → 389건 / v9 보강: 챗봇 389 → 602건, 분석 109 → 280건), 예전 어댑터와 비교할 때는 **둘 다 지금 데이터 파일로** 평가하세요.
 
 **학습 전·후 비교**: 노트북 6-1 이 LoRA 를 붙이기 전의 같은 모델로 같은 평가 레코드를 채점하고, 9번이 학습 후 점수와
 나란히(`학습 전 / 학습 후 / 변화(%p)`) 보여 줍니다. 두 결과와 비교표는 어댑터 폴더의 `run_info.json` 에도 남습니다.
@@ -171,11 +180,13 @@ v8 에서 챗봇 레코드를 정리하며 평가셋도 줄었으니(1,018 → 3
 
 | 데이터 | 건수 | 기준 |
 |---|---|---|
-| `chat_records.jsonl` | 2,388건 - v8 에서 6,077건의 문서 잡음·인사말만 다른 중복·같은 변형 반복을 정리(2,028건)하고 경계 사례 360건을 새로 씀 | label_guide 과제 1, "v8 데이터 정리" |
-| `analysis_records.jsonl` | 691건 - v7 407건 + v8 경계·긴급도·검토 사례 284건(실민원 말투 51건 포함). 카테고리 90~102건씩. 분할 train 485 / val 97 / test 109 | label_guide C1~C8, "v8 데이터 정리" |
+| `chat_records.jsonl` | 2,601건 - v8 에서 6,077건의 문서 잡음·인사말만 다른 중복·같은 변형 반복을 정리(2,028건)하고 경계 사례 360건을 새로 씀 (2,388건). v9 에서 평가 전용 213건 추가 | label_guide 과제 1, "v8 데이터 정리", "v9 평가셋 보강" |
+| `analysis_records.jsonl` | 862건 - v7 407건 + v8 경계·긴급도·검토 사례 284건(실민원 말투 51건 포함) + v9 평가 전용 171건. 분할 train 485 / val 97 / test 280 (카테고리별 40) | label_guide C1~C8, "v8 데이터 정리", "v9 평가셋 보강" |
 
-챗봇 정답 종류별 건수: 접수 748 / 조회(대상 있음) 450 / 거절 346 / 조회(대상 없음) 342 / 문의 안내 302 / 접수(내용 없음) 200
-(분할 train 1,623 / val 376 / test 389)
+챗봇 정답 종류별 건수: 접수 748 / 조회(대상 있음) 471 / 거절 385 / 조회(대상 없음) 380 / 문의 안내 353 / 접수(내용 없음) 264
+(분할 train 1,623 / val 376 / test 602 - test 는 6종 각 100건, 접수만 102건)
+
+v9 에서 넣은 레코드(`c-v9t-*`, `a-v9t-*`)는 모두 `"split": "test"` 로 고정한 평가 전용이라 학습·검증 데이터는 v8 과 같습니다.
 
 ### 종류별 비율 맞추기
 
@@ -186,7 +197,8 @@ v8 에서 챗봇 레코드를 정리하며 평가셋도 줄었으니(1,018 → 3
   `0` 이면 학습 분할 전체 건수(약 1,600건)를 같은 비율로 나눕니다. 많은 종류(접수·조회)는 일부만 쓰고 적은 종류는 반복합니다.
 - 같은 건수면 항상 같은 레코드가 골라지고, 건수를 늘리면 앞서 고른 레코드는 그대로 두고 뒤에 더 붙습니다.
 - 어떤 종류가 몫보다 적으면 `MAX_REPEAT`(기본 3)번까지 반복해 채우고, 그래도 모자란 자리만 다른 종류가 나눠 채웁니다.
-- 분석은 `학습 분석 레코드 수 x ANALYSIS_REPEAT(2)` 개를 카테고리별 같은 수로 고릅니다. (분석 데이터가 챗봇보다 적어 비중을 맞춤.
-  v8 데이터(분석 학습 485건)에서 TRAIN_LIMIT=1000 이면 1 = 약 27%, 2 = 약 42%. v7(280건)의 2 = 약 30% 와 비슷하게 하려면 1)
+- 분석은 `학습 분석 레코드 수 x ANALYSIS_REPEAT(기본 1)` 개를 카테고리별 같은 수로 고릅니다. (분석 데이터가 챗봇보다 적어 비중을 맞춤.
+  분석 학습 485건, TRAIN_LIMIT=1000 이면 1 = 약 27%, 2 = 약 42%. v7(280건)의 2 = 약 30% 와 비슷한 값이 1 이라 기본값을 1 로 바꿨습니다.
+  9번 분석 지표가 낮은데 8번 표의 analysis val loss 가 끝까지 내려가고 있었다면 2 로 올려 보세요)
 - 비율을 고를 때 이미 맞추므로 `samples.build_samples()` 의 `analysis_repeat`, `no_tool_repeat` 은 1 로 둡니다. (예전의 `NO_TOOL_REPEAT` 설정은 없앴습니다)
 데이터를 고친 뒤에는 `python model-training/records.py` 로 검사하세요.

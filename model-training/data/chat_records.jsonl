@@ -2386,3 +2386,216 @@
 {"id": "c-v8-sele-020", "group": "c-v8-sele-020", "text": "아까 민원 넣은 사람인데요 하나 더 덧붙일게요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "tags": ["v8보강", "조회대상없음"]}
 {"id": "c-v8-sele-021", "group": "c-v8-sele-021", "text": "제 민원이 처리 완료로 바뀌었는데 하나도 안 고쳐졌어요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "tags": ["v8보강", "조회대상없음"]}
 {"id": "c-v8-sele-022", "group": "c-v8-sele-022", "text": "지난주 신고 건 아직 대기예요?", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "tags": ["v8보강", "조회대상없음"]}
+{"id": "c-v9t-a3-001", "group": "c-v9t-a3-001", "text": "오늘은 꼭 민원 하나 남기고 가려고요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-002", "group": "c-v9t-a3-002", "text": "알려 드릴 게 있어서 신고서 작성하려고 합니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-003", "group": "c-v9t-a3-003", "text": "양식에 제가 직접 적어 볼게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-004", "group": "c-v9t-a3-004", "text": "접수 화면 띄워 주시겠어요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-005", "group": "c-v9t-a3-005", "text": "신고 좀 하려고 들어왔습니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-006", "group": "c-v9t-a3-006", "text": "학원가 일로 민원 써야 할 것 같아요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-007", "group": "c-v9t-a3-007", "text": "시장 쪽 일로 접수하려고요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-008", "group": "c-v9t-a3-008", "text": "우리 골목 일로 신고 하나 하겠습니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-009", "group": "c-v9t-a3-009", "text": "회사 근처 일로 민원 넣을게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-010", "group": "c-v9t-a3-010", "text": "어머니 대신 민원 하나 접수하려고 해요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-011", "group": "c-v9t-a3-011", "text": "아이 학교 일로 건의 하나 올릴게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-012", "group": "c-v9t-a3-012", "text": "건의사항 남기겠습니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-013", "group": "c-v9t-a3-013", "text": "개선 요청 하나 드리려고요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-014", "group": "c-v9t-a3-014", "text": "칭찬 민원 하나 쓰고 싶어요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-015", "group": "c-v9t-a3-015", "text": "감사 인사를 민원으로 남기고 싶어요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-016", "group": "c-v9t-a3-016", "text": "이번엔 정식으로 민원 접수할게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-017", "group": "c-v9t-a3-017", "text": "몇 번 참았는데 이제 신고하겠습니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-018", "group": "c-v9t-a3-018", "text": "직접 작성할 테니까 빈 양식만 열어 주세요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-019", "group": "c-v9t-a3-019", "text": "저 신고합니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-020", "group": "c-v9t-a3-020", "text": "주차장 일로 민원 넣을까 해요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-021", "group": "c-v9t-a3-021", "text": "아파트 상가 일로 접수 좀 할게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-022", "group": "c-v9t-a3-022", "text": "놀이터 옆 공터 일로 민원 넣으려고요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-023", "group": "c-v9t-a3-023", "text": "지하철역 일로 신고하려고 해요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-024", "group": "c-v9t-a3-024", "text": "공사장 일로 민원 쓸게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-025", "group": "c-v9t-a3-025", "text": "하천 산책로 일로 건의드리려고요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-026", "group": "c-v9t-a3-026", "text": "민원 접수 시작할게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-027", "group": "c-v9t-a3-027", "text": "좋아요 바로 접수 진행할게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-028", "group": "c-v9t-a3-028", "text": "할 말이 있어서 민원 넣으려 합니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-029", "group": "c-v9t-a3-029", "text": "민원 작성 페이지로 넘어가 주세요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-030", "group": "c-v9t-a3-030", "text": "접수부터 하고 자세한 건 거기 적을게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-031", "group": "c-v9t-a3-031", "text": "구청에 전할 말이 있어서요 접수할게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-032", "group": "c-v9t-a3-032", "text": "안녕하세요 시민 제안 하나 하려고 합니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-033", "group": "c-v9t-a3-033", "text": "우리 동네 일로 정식으로 요청 넣으려고요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-034", "group": "c-v9t-a3-034", "text": "신고 접수 부탁해요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-035", "group": "c-v9t-a3-035", "text": "오늘 시간 내서 민원 쓰러 들어왔습니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-036", "group": "c-v9t-a3-036", "text": "저번 거 말고 새로 하나 접수할게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-037", "group": "c-v9t-a3-037", "text": "이번에 새로 민원 넣을 게 있어요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-038", "group": "c-v9t-a3-038", "text": "다른 건으로 하나 더 접수하려고요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-039", "group": "c-v9t-a3-039", "text": "남편 회사 일로 신고하려고 합니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-040", "group": "c-v9t-a3-040", "text": "도서관 일로 의견 남기려고요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-041", "group": "c-v9t-a3-041", "text": "버스 노선 일로 건의 넣겠습니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-042", "group": "c-v9t-a3-042", "text": "길고양이 일로 민원 하나 쓸게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-043", "group": "c-v9t-a3-043", "text": "학교 앞 횡단보도 일로 민원 쓰려고요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-044", "group": "c-v9t-a3-044", "text": "옆 건물 일로 신고할게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-045", "group": "c-v9t-a3-045", "text": "한 가지 불편 사항 접수하겠습니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-046", "group": "c-v9t-a3-046", "text": "오늘 겪은 일 민원으로 올릴게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-047", "group": "c-v9t-a3-047", "text": "문의 말고 접수요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-048", "group": "c-v9t-a3-048", "text": "신고 양식 부탁드립니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-049", "group": "c-v9t-a3-049", "text": "민원 하나 적어서 낼게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-050", "group": "c-v9t-a3-050", "text": "바로 신고서 쓰겠습니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-051", "group": "c-v9t-a3-051", "text": "처음인데 민원 한번 넣어 볼게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-052", "group": "c-v9t-a3-052", "text": "휴 결국 민원 넣네요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-053", "group": "c-v9t-a3-053", "text": "참고로 말씀드릴 게 있어서 접수합니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-054", "group": "c-v9t-a3-054", "text": "보건소 일로 민원 남길게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-055", "group": "c-v9t-a3-055", "text": "경로당 일로 건의드릴게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-056", "group": "c-v9t-a3-056", "text": "우리 빌라 일로 신고합니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-057", "group": "c-v9t-a3-057", "text": "전화보다 글이 편해서 여기서 민원 넣을게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-058", "group": "c-v9t-a3-058", "text": "접수 버튼을 못 찾겠어서요 양식 띄워 주세요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-059", "group": "c-v9t-a3-059", "text": "ㅇㅇ 민원 접수 ㄱㄱ", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-060", "group": "c-v9t-a3-060", "text": "민원 접수 부탁 좀 드릴게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-061", "group": "c-v9t-a3-061", "text": "제보할 게 하나 있습니다", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-062", "group": "c-v9t-a3-062", "text": "시청에 요청할 게 있어서 접수하려고요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-063", "group": "c-v9t-a3-063", "text": "수고하십니다. 상가 앞 일로 민원 드리려고요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-a3-064", "group": "c-v9t-a3-064", "text": "저희 가게 일로 접수 하나 할게요", "tool": "insertRequestT", "arguments": {"title": "", "content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-001", "group": "c-v9t-inq-001", "text": "민원 처리 기한은 보통 며칠이에요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-002", "group": "c-v9t-inq-002", "text": "접수한 민원은 누가 읽어요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-003", "group": "c-v9t-inq-003", "text": "민원 넣을 때 사진도 같이 첨부할 수 있나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-004", "group": "c-v9t-inq-004", "text": "익명으로도 신고할 수 있어요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-005", "group": "c-v9t-inq-005", "text": "회원가입 안 해도 민원 넣을 수 있나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-006", "group": "c-v9t-inq-006", "text": "민원 결과는 문자로 와요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-007", "group": "c-v9t-inq-007", "text": "한 번에 여러 건 접수해도 되나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-008", "group": "c-v9t-inq-008", "text": "영어로 써도 접수되나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-009", "group": "c-v9t-inq-009", "text": "밤에 넣어도 바로 접수 처리돼요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-010", "group": "c-v9t-inq-010", "text": "처리 중인 민원은 수정이 안 되나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-011", "group": "c-v9t-inq-011", "text": "현수막 신고에도 포상금이 있나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-012", "group": "c-v9t-inq-012", "text": "폐가전 무상 수거는 어떻게 신청해요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-013", "group": "c-v9t-inq-013", "text": "음식물 쓰레기 버리는 시간이 정해져 있나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-014", "group": "c-v9t-inq-014", "text": "안녕하세요. 재활용 분리배출 요일 알려 주세요", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-015", "group": "c-v9t-inq-015", "text": "주민등록등본 무인발급기는 어디 있어요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-016", "group": "c-v9t-inq-016", "text": "인감증명서 대리 발급도 되나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-017", "group": "c-v9t-inq-017", "text": "전입신고는 이사하고 며칠 안에 해야 돼요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-018", "group": "c-v9t-inq-018", "text": "여권 재발급은 얼마나 걸려요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-019", "group": "c-v9t-inq-019", "text": "거주자 우선주차 신청은 언제 받아요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-020", "group": "c-v9t-inq-020", "text": "공영주차장 월 정기권 가격이 얼마예요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-021", "group": "c-v9t-inq-021", "text": "불법 주정차 신고하는 앱이 따로 있나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-022", "group": "c-v9t-inq-022", "text": "전동킥보드 방치 신고는 어느 부서 소관인가요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-023", "group": "c-v9t-inq-023", "text": "체육센터 수영 강습 등록은 언제 해요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-024", "group": "c-v9t-inq-024", "text": "문화센터 강좌 환불 규정이 어떻게 돼요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-025", "group": "c-v9t-inq-025", "text": "시립도서관 휴관일이 언제예요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-026", "group": "c-v9t-inq-026", "text": "문의드려요. 청년 구직활동 지원금 나이 제한이 있나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-027", "group": "c-v9t-inq-027", "text": "소상공인 정책자금 신청 기간 알려 주세요", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-028", "group": "c-v9t-inq-028", "text": "지역화폐 충전 한도가 얼마예요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-029", "group": "c-v9t-inq-029", "text": "온누리상품권은 어디서 살 수 있어요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-030", "group": "c-v9t-inq-030", "text": "기초생활수급 신청은 어디서 해요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-031", "group": "c-v9t-inq-031", "text": "첫만남이용권은 어디서 쓸 수 있어요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-032", "group": "c-v9t-inq-032", "text": "보건소 독감 무료 접종은 몇 살부터예요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-033", "group": "c-v9t-inq-033", "text": "치매 검사를 보건소에서 받을 수 있나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-034", "group": "c-v9t-inq-034", "text": "에너지 바우처 신청 자격이 뭐예요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-035", "group": "c-v9t-inq-035", "text": "장애인 주차 표지는 어디서 발급받아요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-036", "group": "c-v9t-inq-036", "text": "층간소음 상담은 어디서 받을 수 있어요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-037", "group": "c-v9t-inq-037", "text": "전세 사기 상담 창구가 따로 있나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-038", "group": "c-v9t-inq-038", "text": "건축물대장 열람은 어떻게 해요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-039", "group": "c-v9t-inq-039", "text": "청약 1순위 조건은 어떻게 되나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "example.csv:300474", "split": "test", "tags": ["v9평가보강", "실민원참고"]}
+{"id": "c-v9t-inq-040", "group": "c-v9t-inq-040", "text": "임금체불은 어디에 신고하는 거예요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-041", "group": "c-v9t-inq-041", "text": "노동권익센터 상담 시간이 언제예요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-042", "group": "c-v9t-inq-042", "text": "민방위 교육 일정은 어디서 확인해요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-043", "group": "c-v9t-inq-043", "text": "재난문자 수신 설정은 어떻게 바꿔요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-044", "group": "c-v9t-inq-044", "text": "가까운 대피소 위치를 알 수 있나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-045", "group": "c-v9t-inq-045", "text": "길에서 다친 새를 보면 어디로 연락하나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-046", "group": "c-v9t-inq-046", "text": "공원에서 쓸 수 있는 텐트 크기 제한이 있나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "example.csv:102", "split": "test", "tags": ["v9평가보강", "실민원참고"]}
+{"id": "c-v9t-inq-047", "group": "c-v9t-inq-047", "text": "현수막 게시대 사용 신청은 어떻게 해요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-048", "group": "c-v9t-inq-048", "text": "민원 답변에 재질의는 몇 번까지 할 수 있어요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-inq-049", "group": "c-v9t-inq-049", "text": "청년 창업 대출은 어디서 지원해 주나요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "example.csv:501090", "split": "test", "tags": ["v9평가보강", "실민원참고"]}
+{"id": "c-v9t-inq-050", "group": "c-v9t-inq-050", "text": "지게차 운전하려면 교육 이수가 꼭 필요한가요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "example.csv:700201", "split": "test", "tags": ["v9평가보강", "실민원참고"]}
+{"id": "c-v9t-inq-051", "group": "c-v9t-inq-051", "text": "궁금한 게 있는데요, 축제 부스 참가 신청은 어디서 해요?", "tool": null, "arguments": null, "reply_kind": "inquiry_redirect", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-001", "group": "c-v9t-rej-001", "text": "내일 비 온대요?", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-002", "group": "c-v9t-rej-002", "text": "점심 메뉴 추천 좀", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-003", "group": "c-v9t-rej-003", "text": "넌 누가 만들었어?", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-004", "group": "c-v9t-rej-004", "text": "사람이에요 로봇이에요?", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-005", "group": "c-v9t-rej-005", "text": "넷플릭스에서 뭐 볼까", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-006", "group": "c-v9t-rej-006", "text": "수학 문제 하나만 풀어 줘", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-007", "group": "c-v9t-rej-007", "text": "이 문장 영어로 번역 좀 해 줘", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-008", "group": "c-v9t-rej-008", "text": "우리 가위바위보 해요", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-009", "group": "c-v9t-rej-009", "text": "로또 번호 뽑아 줘", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-010", "group": "c-v9t-rej-010", "text": "살 빼는 법 알려 줘요", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-011", "group": "c-v9t-rej-011", "text": "어제 야구 누가 이겼어요?", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-012", "group": "c-v9t-rej-012", "text": "네 알겠습니다 수고하세요", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-013", "group": "c-v9t-rej-013", "text": "그럼 이만 갈게요~", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-014", "group": "c-v9t-rej-014", "text": "안녕히 계세요", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-015", "group": "c-v9t-rej-015", "text": "알았어용", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-016", "group": "c-v9t-rej-016", "text": "음...", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-017", "group": "c-v9t-rej-017", "text": "테스트 중입니다 무시하세요", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-018", "group": "c-v9t-rej-018", "text": "아무거나", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-019", "group": "c-v9t-rej-019", "text": "ㅋㅋㅋ 이거 신기하네", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-020", "group": "c-v9t-rej-020", "text": "반가워요 처음 써 봐요", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-021", "group": "c-v9t-rej-021", "text": "무료 상담! 개인회생 파산 전문 법률사무소", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-022", "group": "c-v9t-rej-022", "text": "신규 오픈 헬스장 3개월 50% 할인 이벤트", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-023", "group": "c-v9t-rej-023", "text": "고수익 보장 주식 리딩방 무료 초대", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-024", "group": "c-v9t-rej-024", "text": "이사 청소 견적 무료로 받아 보세요", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-025", "group": "c-v9t-rej-025", "text": "블로그 체험단 모집합니다 원고료 지급", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-026", "group": "c-v9t-rej-026", "text": "저렴한 중고 노트북 팝니다 직거래 가능", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-027", "group": "c-v9t-rej-027", "text": "ㅗㅓㅏㅣ", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-028", "group": "c-v9t-rej-028", "text": "asdfgh", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-029", "group": "c-v9t-rej-029", "text": "..??", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-030", "group": "c-v9t-rej-030", "text": "쀍쒧뫏", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-031", "group": "c-v9t-rej-031", "text": "1111", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-032", "group": "c-v9t-rej-032", "text": "흐어엉", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-033", "group": "c-v9t-rej-033", "text": "심심하다", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-034", "group": "c-v9t-rej-034", "text": "시 한 편 써 줘", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-035", "group": "c-v9t-rej-035", "text": "우주는 얼마나 커?", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-036", "group": "c-v9t-rej-036", "text": "너 생각보다 똑똑하네", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-037", "group": "c-v9t-rej-037", "text": "김치찌개 맛있게 끓이는 법 알려 줘", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-038", "group": "c-v9t-rej-038", "text": "요즘 들을 만한 노래 추천해 줘", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-rej-039", "group": "c-v9t-rej-039", "text": "1q2w3e", "tool": null, "arguments": null, "reply_kind": "reject", "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-001", "group": "c-v9t-sele-001", "text": "오늘 오전에 넣은 민원 어떻게 됐나요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-002", "group": "c-v9t-sele-002", "text": "제가 올린 민원 전부 보여 주세요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-003", "group": "c-v9t-sele-003", "text": "지난달에 접수한 건 답변 왔어요?", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-004", "group": "c-v9t-sele-004", "text": "그저께 신고한 거 담당 부서 어디로 갔어요?", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-005", "group": "c-v9t-sele-005", "text": "방금 넣은 거 잘못 썼어요 고칠게요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-006", "group": "c-v9t-sele-006", "text": "아까 접수한 거 취소해 주세요 제가 해결했어요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-007", "group": "c-v9t-sele-007", "text": "제 민원 아직 대기 상태예요?", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-008", "group": "c-v9t-sele-008", "text": "지난번에 넣었던 거 장소를 바꿔야 해요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-009", "group": "c-v9t-sele-009", "text": "처음 넣은 민원이랑 두 번째 거 중복이라 하나 지워 주세요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-010", "group": "c-v9t-sele-010", "text": "봄에 신고했던 거 결과 좀 알려 주세요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-011", "group": "c-v9t-sele-011", "text": "어제 쓴 민원 다시 확인하고 싶어요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-012", "group": "c-v9t-sele-012", "text": "제가 넣은 신고 중에 처리 끝난 거 있어요?", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-013", "group": "c-v9t-sele-013", "text": "지난주 민원 내용에 하나 덧붙일게요. 어제도 똑같은 일이 있었어요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-014", "group": "c-v9t-sele-014", "text": "아침에 올린 거 철회할게요 착각했어요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-015", "group": "c-v9t-sele-015", "text": "며칠 전에 접수한 건 처리 기한이 언제까지예요?", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-016", "group": "c-v9t-sele-016", "text": "한 달 전에 넣은 민원 왜 아직도 진행 중이에요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-017", "group": "c-v9t-sele-017", "text": "제 신고 건 담당자가 바뀌었다던데 확인해 주세요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-018", "group": "c-v9t-sele-018", "text": "2주 전 신고 건 위치 정정할게요 별관이 아니라 본관이에요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-019", "group": "c-v9t-sele-019", "text": "민원 넣은 거 반려됐다는데 이유가 뭐예요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-020", "group": "c-v9t-sele-020", "text": "지난번 민원 처리 완료라고 떴는데 그대로예요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-021", "group": "c-v9t-sele-021", "text": "엊그제 넣은 거에 사진 추가하고 싶어요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-022", "group": "c-v9t-sele-022", "text": "제가 넣은 민원들 한꺼번에 지워 주세요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-023", "group": "c-v9t-sele-023", "text": "민원번호 4821 진행 상황 알려 주세요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-024", "group": "c-v9t-sele-024", "text": "3817번 민원 내용 수정할게요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-025", "group": "c-v9t-sele-025", "text": "지난 금요일에 넣은 거 아직 접수 대기네요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-026", "group": "c-v9t-sele-026", "text": "제가 쓴 민원 목록 좀 볼 수 있을까요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-027", "group": "c-v9t-sele-027", "text": "그 민원 이제 안 해도 될 것 같아요 이웃이 알아서 치웠어요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-028", "group": "c-v9t-sele-028", "text": "작년에 넣었던 민원 다시 보여 주세요 같은 일이 또 생겼어요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-029", "group": "c-v9t-sele-029", "text": "아까 쓴 거 내용 좀 바꿀게요 시간이 저녁이 아니라 새벽이에요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-030", "group": "c-v9t-sele-030", "text": "지난주 화요일 신고 건 현장 나오셨나요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-031", "group": "c-v9t-sele-031", "text": "제가 넣은 거 처리 결과에 이의가 있어요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-032", "group": "c-v9t-sele-032", "text": "아까 올린 신고 하나 삭제 부탁해요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-033", "group": "c-v9t-sele-033", "text": "어제 올린 거 위치를 정문 쪽으로 바꿔 주세요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-034", "group": "c-v9t-sele-034", "text": "지난번 제가 넣은 거 아직이죠? 오늘은 아예 못 다니겠어요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-035", "group": "c-v9t-sele-035", "text": "접수한 민원 진행 단계 좀 알려 줘요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-036", "group": "c-v9t-sele-036", "text": "전에 신고한 거 처리됐다는 문자가 안 와서요 확인해 주세요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-037", "group": "c-v9t-sele-037", "text": "내 민원 언제 처리돼요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sele-038", "group": "c-v9t-sele-038", "text": "연휴 전에 넣은 신고 어떻게 됐는지 궁금해요", "tool": "selectComplaintT", "arguments": {"content": ""}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-001", "group": "c-v9t-sel-001", "text": "지난주에 신고한 보안등 건 어떻게 됐어요?", "tool": "selectComplaintT", "arguments": {"content": "보안등"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-002", "group": "c-v9t-sel-002", "text": "빗물받이 막혔다고 넣은 민원 취소할게요 비 그치고 뚫렸어요", "tool": "selectComplaintT", "arguments": {"content": "빗물받이"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-003", "group": "c-v9t-sel-003", "text": "경로당 보일러 민원에 내용 추가요. 오늘은 아예 안 켜져요", "tool": "selectComplaintT", "arguments": {"content": "보일러"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-004", "group": "c-v9t-sel-004", "text": "놀이터 그네 민원 담당자 배정됐어요?", "tool": "selectComplaintT", "arguments": {"content": "그네"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-005", "group": "c-v9t-sel-005", "text": "제가 넣은 무단투기 민원 목록 보여 주세요", "tool": "selectComplaintT", "arguments": {"content": "무단투기"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-006", "group": "c-v9t-sel-006", "text": "퇴직금 신고 건 회사 이름을 정정할게요", "tool": "selectComplaintT", "arguments": {"content": "퇴직금"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-007", "group": "c-v9t-sel-007", "text": "지역화폐 캐시백 민원 처리 결과 나왔나요?", "tool": "selectComplaintT", "arguments": {"content": "지역화폐 캐시백"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-008", "group": "c-v9t-sel-008", "text": "비둘기 민원 이제 안 하셔도 돼요 그물망 설치했대요", "tool": "selectComplaintT", "arguments": {"content": "비둘기"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-009", "group": "c-v9t-sel-009", "text": "지난달 넣은 싱크홀 신고 어디까지 진행됐어요", "tool": "selectComplaintT", "arguments": {"content": "싱크홀"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-010", "group": "c-v9t-sel-010", "text": "활동지원사 민원 내용 바꿀게요. 시간이 줄어든 게 아니라 아예 끊겼어요", "tool": "selectComplaintT", "arguments": {"content": "활동지원사"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-011", "group": "c-v9t-sel-011", "text": "공영주차장 민원 취소해 주세요 요금 환불받았어요", "tool": "selectComplaintT", "arguments": {"content": "공영주차장"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-012", "group": "c-v9t-sel-012", "text": "간접흡연 신고 건 아직 처리 중인가요", "tool": "selectComplaintT", "arguments": {"content": "간접흡연"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-013", "group": "c-v9t-sel-013", "text": "수영 강습 민원 답변 아직이에요?", "tool": "selectComplaintT", "arguments": {"content": "수영 강습"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-014", "group": "c-v9t-sel-014", "text": "전세 보증금 민원에 계약서 사진 추가하고 싶어요", "tool": "selectComplaintT", "arguments": {"content": "전세 보증금"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-015", "group": "c-v9t-sel-015", "text": "배차 간격 민원 어떻게 됐나 궁금해요", "tool": "selectComplaintT", "arguments": {"content": "배차 간격"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-016", "group": "c-v9t-sel-016", "text": "어제 넣은 매연 신고 철회합니다 공장이 오늘 멈췄대요", "tool": "selectComplaintT", "arguments": {"content": "매연"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-017", "group": "c-v9t-sel-017", "text": "무인발급기 고장 신고한 거 고쳐졌어요 취소요", "tool": "selectComplaintT", "arguments": {"content": "무인발급기"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-018", "group": "c-v9t-sel-018", "text": "기초연금 신청 지연 민원 진행 상황 좀요", "tool": "selectComplaintT", "arguments": {"content": "기초연금"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-019", "group": "c-v9t-sel-019", "text": "제가 낸 현수막 민원들 전부 보여 주세요", "tool": "selectComplaintT", "arguments": {"content": "현수막"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-020", "group": "c-v9t-sel-020", "text": "화장실 악취 민원 장소 정정이요. 북문이 아니라 남문 화장실이에요", "tool": "selectComplaintT", "arguments": {"content": "화장실"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
+{"id": "c-v9t-sel-021", "group": "c-v9t-sel-021", "text": "연차수당 민원 넣은 거요, 사장님이 오늘 정산해 줬어요 취소할게요", "tool": "selectComplaintT", "arguments": {"content": "연차수당"}, "source": "new", "split": "test", "tags": ["v9평가보강"]}
