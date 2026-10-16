@@ -2,6 +2,7 @@ import asyncio
 import csv
 import io
 import json
+import os
 from typing import Annotated, Any
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Path, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -572,7 +573,6 @@ async def chatAI(chatBody: ChatRequestBody, actor: Annotated[dict, Depends(actor
 
 CHUNK_ROW_SIZE = 5
 
-#7분야 csv 전용 파싱툴 (pdf 등은 새로 제작 필요)
 @router.post("/documents", status_code=201)
 async def create_department_document(
     file: UploadFile = File(...),
@@ -590,16 +590,25 @@ async def create_department_document(
     except UnicodeDecodeError:
         decoded_content = contents.decode("euc-kr")
     
-    csv_reader = csv.reader(io.StringIO(decoded_content))
-    header = next(csv_reader, None)
-    
     document_id = str(uuid4())
     department_id = actor.get("department_id", 0)
     original_name = file.filename
-    storage_path = f"data/uploads/{document_id}.csv"
+    
+    # 2. 업로드된 원본 파일을 서버 디스크에 실제 저장 (디렉토리 생성 포함)
+    upload_dir = "data/uploads"
+    os.makedirs(upload_dir, exist_ok=True)
+    storage_path = os.path.join(upload_dir, f"{document_id}.csv")
+    
+    # 비동기 환경에서 블로킹을 막기 위해 파일 쓰기 작업 분리 또는 직접 쓰기
+    with open(storage_path, "wb") as f:
+        f.write(contents)
+        
     created_by = actor.get("sub") or actor.get("owner_id")
     
     # 3. CSV 행(Row)을 먼저 모두 읽어 청크 단위로 분할
+    csv_reader = csv.reader(io.StringIO(decoded_content))
+    header = next(csv_reader, None)
+    
     chunks = []
     current_chunk = []
     
@@ -624,7 +633,7 @@ async def create_department_document(
         raise HTTPException(status_code=400, detail="처리할 유효한 데이터가 없습니다.")
 
     # 4. 개별 청크에 대한 임베딩을 비동기 병렬로 처리하는 함수
-    semaphore = asyncio.Semaphore(5)  # 동시에 처리할 최대 Ollama 요청 수 (서버 사양에 맞게 조절)
+    semaphore = asyncio.Semaphore(5)  # 동시에 처리할 최대 Ollama 요청 수
 
     async def process_chunk(client: httpx.AsyncClient, chunk_texts: list[str], version: int) -> dict[str, Any]:
         valid_inputs = [text for text in chunk_texts if text.strip()]
@@ -674,35 +683,41 @@ async def create_department_document(
     if not valid_results:
         raise HTTPException(status_code=400, detail="생성된 임베딩이 없습니다.")
 
-    # 6. 수집된 결과를 데이터베이스에 일괄 저장
-    saved_count = 0
-    with connection() as conn:
-        with conn.cursor() as cur:
-            sql = """
-                INSERT INTO department_documents (
-                    id, document_id, department_id, title, original_name, version, 
-                    storage_path, content, embedding, created_by, created_at
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, NOW())
-            """
-            for res in valid_results:
-                cur.execute(sql, (
-                    res["new_id"],
-                    document_id,
-                    department_id,
-                    res["doc_title"],
-                    original_name,
-                    res["version"],
-                    storage_path,
-                    res["chunk_content"],
-                    res["vector_str"],
-                    created_by
-                ))
-                saved_count += 1
-        conn.commit()
+    # 6. 수집된 결과를 데이터베이스에 일괄 저장 (동기 DB 연결일 경우 asyncio.to_thread 활용 권장)
+    def save_to_db():
+        saved_count = 0
+        with connection() as conn:
+            with conn.cursor() as cur:
+                sql = """
+                    INSERT INTO department_documents (
+                        id, document_id, department_id, title, original_name, version, 
+                        storage_path, content, embedding, created_by, created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, NOW())
+                """
+                for res in valid_results:
+                    cur.execute(sql, (
+                        res["new_id"],
+                        document_id,
+                        department_id,
+                        res["doc_title"],
+                        original_name,
+                        res["version"],
+                        storage_path,
+                        res["chunk_content"],
+                        res["vector_str"],
+                        created_by
+                    ))
+                    saved_count += 1
+            conn.commit()
+        return saved_count
+
+    # 블로킹되는 DB 작업을 이벤트 루프 차단 없이 실행
+    saved_count = await asyncio.to_thread(save_to_db)
 
     return {
-        "message": "대용량 문서가 비동기 청킹되어 성공적으로 저장되었습니다.",
+        "message": "대용량 문서가 비동기 청킹되어 파일 및 DB에 성공적으로 저장되었습니다.",
         "document_id": document_id,
-        "total_versions": saved_count
+        "total_versions": saved_count,
+        "storage_path": storage_path
     }
