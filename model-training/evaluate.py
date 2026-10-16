@@ -263,11 +263,27 @@ def check_batch_consistency(gen, chat_records: list[dict], analysis_records: lis
     batched = generate_all(gen, reqs, "[묶음 생성 확인] 묶어서")
     single = [gen(m, tools=t, schema=s) for m, t, s in reqs]
     same = sum(a["raw"] == b["raw"] for a, b in zip(batched, single))
-    print(f"[묶음 생성 확인] {len(reqs)}건 중 {same}건이 한 건씩 생성한 결과와 글자까지 같음 (묶음 크기 {gen.batch_size})")
-    if (len(reqs) - same) * 4 > len(reqs):
+    # 채점에 쓰는 값 - 요약 문장의 단어 차이(계산 순서에 따른 정상적인 오차)는 무시하고, 점수를 바꾸는 값만 비교
+    core_same = sum(_core(a, s is not None) == _core(b, s is not None) for a, b, (_, _, s) in zip(batched, single, reqs))
+    print(f"[묶음 생성 확인] {len(reqs)}건 중 채점 값(도구·인자·고정 문구 / JSON 파싱·카테고리·긴급도)이 같은 것 {core_same}건, "
+          f"글자까지 같은 것 {same}건 (묶음 크기 {gen.batch_size})")
+    if same < core_same:
+        print("  글자만 다른 건 요약 표현 등 계산 순서에 따른 작은 차이라 점수에는 영향이 거의 없습니다.")
+    if (len(reqs) - core_same) * 4 > len(reqs):
         gen.batch_size = 1
-        print("  -> 다른 결과가 많아 묶음 생성을 끄고 한 건씩 생성합니다. (EVAL_BATCH = 1 과 같음)")
-    return {"checked": len(reqs), "same": same, "batch_size": gen.batch_size}
+        print("  -> 채점 값이 다른 결과가 많아 묶음 생성을 끄고 한 건씩 생성합니다. (EVAL_BATCH = 1 과 같음)")
+    return {"checked": len(reqs), "same": same, "core_same": core_same, "batch_size": gen.batch_size}
+
+
+def _core(out: dict, is_analysis: bool) -> tuple:
+    """묶음 확인용 - 점수를 정하는 값만. 챗봇: 도구·인자·도구 없는 답 문구 / 분석: JSON 파싱 여부·그대로 파싱·카테고리·긴급도"""
+    if not is_analysis:
+        return (out.get("tool"), json.dumps(out.get("arguments"), ensure_ascii=False, sort_keys=True),
+                out.get("text") if out.get("tool") is None else None)
+    parsed = parse_json_output(out.get("text"))
+    if parsed is None:
+        return (False,)
+    return (True, is_plain_json(out.get("text")), parsed.get("category"), parsed.get("urgency"))
 
 
 def ollama_generator(model_name: str, url: str = "http://127.0.0.1:11434", num_ctx: int = 8192, timeout: int = 300):
@@ -425,7 +441,7 @@ def evaluate_chat(gen, chat_records: list[dict], limit: int | None = None, reply
         else:
             c["none_n"] += 1
             c["none_text_ok"] += ok and out["text"] == prompts.REPLY_TEXTS[r["reply_kind"]]
-        if not ok and len(mistakes) < 30:
+        if not ok:   # 틀린 예는 모두 남깁니다 (개수 제한 없음)
             mistakes.append({"id": r["id"], "text": r["text"], "expected": chat_label(r),
                              "got": got_tool, "got_text": out["text"][:120]})
 
@@ -474,9 +490,9 @@ def evaluate_analysis(gen, analysis_records: list[dict], limit: int | None = Non
         c["truncated"] += bool(out.get("truncated"))
         parsed = parse_json_output(out["text"])
         if parsed is None:
-            if len(mistakes) < 30:
-                problem = "생성 잘림(max_new_tokens)" if out.get("truncated") else "JSON 아님"
-                mistakes.append({"id": r["id"], "problem": problem, "text": out["text"][:200]})
+            problem = "생성 잘림(max_new_tokens)" if out.get("truncated") else "JSON 아님"
+            mistakes.append({"id": r["id"], "problem": problem, "title": r["title"], "content": r["content"][:200],
+                             "text": out["text"][:200]})
             continue
         c["json_ok"] += 1
         c["cat_ok"] += parsed.get("category") == r["output"]["category"]
@@ -491,10 +507,15 @@ def evaluate_analysis(gen, analysis_records: list[dict], limit: int | None = Non
         c["num_n"] += len(nums)
         c["num_in"] += len(nums) - len(missing)
         wrong_cat = parsed.get("category") != r["output"]["category"]
-        if (wrong_cat or missing) and len(mistakes) < 30:
-            mistakes.append({"id": r["id"], "problem": "카테고리 틀림" if wrong_cat else "요약에 원문에 없는 숫자",
+        wrong_urg = parsed.get("urgency") != r["output"]["urgency"]
+        problems = [p for p, bad in (("카테고리 틀림", wrong_cat), ("긴급도 틀림", wrong_urg),
+                                     ("요약에 원문에 없는 숫자", bool(missing))) if bad]
+        if problems:   # 틀린 예는 모두 남깁니다 (개수 제한 없음). 정답 재검토용으로 입력 제목·원문도 함께
+            mistakes.append({"id": r["id"], "problem": " / ".join(problems),
                              "expected_category": r["output"]["category"], "got_category": parsed.get("category"),
-                             "summary_numbers_missing": missing, "summary": summary[:150]})
+                             "expected_urgency": r["output"]["urgency"], "got_urgency": parsed.get("urgency"),
+                             "summary_numbers_missing": missing, "title": r["title"], "content": r["content"][:200],
+                             "summary": summary[:150]})
     return {
         "JSON 파싱 성공률": _rate(c["json_ok"], c["n"]),
         "JSON 그대로 파싱(코드블록 없음)": _rate(c["plain_ok"], c["n"]),
