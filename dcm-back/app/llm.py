@@ -159,6 +159,7 @@ def make_chat_model(task: str = TASK_CHAT, temperature: float = 0.1):
             api_key="not-needed",             # llama-server 를 --api-key 없이 띄우면 아무 값이나 됩니다
             temperature=temperature,
             timeout=LLM_TIMEOUT_MS / 1000,
+            stream_chunk_timeout=LLM_TIMEOUT_MS / 1000,
             max_retries=1,
             extra_body=llama_server_extra(task),
         )

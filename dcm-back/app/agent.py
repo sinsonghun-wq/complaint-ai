@@ -83,6 +83,9 @@ selectComplaintT = tool(selectComplaintT)
 request_queue = asyncio.Queue()
 worker_task = None
 
+# 요청마다 새로 만들면 이전 대화가 사라지므로 전역으로 한 번만 만듭니다. (thread_id=user_id 로 유저별 기록 구분)
+global_memory = MemorySaver()
+
 async def llm_worker(llm, tools_dict):
     while True:
         try:
@@ -99,10 +102,9 @@ async def llm_worker(llm, tools_dict):
                 active_tools = [tools_dict["aiFAQ"]]
 
             # 동적 툴이 바인딩된 에이전트 생성 (매 요청마다 모드별 최적화)
-            memory = MemorySaver()
             current_system_prompt = prompts.agent_system_prompt(agent_mode)
 
-            agent_executor = create_agent(llm, active_tools, checkpointer=memory, system_prompt=current_system_prompt)
+            agent_executor = create_agent(llm, active_tools, checkpointer=global_memory, system_prompt=current_system_prompt)
 
             config = {"configurable": {"user_id": user_id, "thread_id": user_id},"recursion_limit": 5}
             
