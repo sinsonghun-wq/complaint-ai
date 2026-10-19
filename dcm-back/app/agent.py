@@ -18,7 +18,7 @@ from .ai import embeddingForSelect
 from .db import fetch_all
 from langgraph.checkpoint.memory import MemorySaver
 
-RAG_ROW_LIMIT = 1
+RAG_ROW_LIMIT = 3
 COMPLAINT_ROW_LIMIT = 3
 
 # --- 툴 정의 ---
@@ -28,7 +28,7 @@ async def aiFAQ(content: str, is_described: bool) -> dict:
     if vector:
         rows = fetch_all(
             f"""
-                SELECT SUBSTRING(content, 1, 3000) AS content
+                SELECT SUBSTRING(content, 1, 5000) AS content
                 FROM department_documents 
                 WHERE deleted_at IS NULL 
                 ORDER BY embedding <=> %s::vector 

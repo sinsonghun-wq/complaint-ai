@@ -286,7 +286,7 @@ def _core(out: dict, is_analysis: bool) -> tuple:
     return (True, is_plain_json(out.get("text")), parsed.get("category"), parsed.get("urgency"))
 
 
-def ollama_generator(model_name: str, url: str = "http://127.0.0.1:11434", num_ctx: int = 8192, timeout: int = 300):
+def ollama_generator(model_name: str, url: str = "http://127.0.0.1:11434", num_ctx: int = 32768, timeout: int = 300):
     """앱과 같은 방식으로 /api/chat 을 부릅니다. (챗봇: tools, 분석: format=JSON 스키마)"""
 
     def gen(messages: list[dict], tools: list[dict] | None = None, schema: dict | None = None) -> dict:
@@ -577,7 +577,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--lora-scale", type=float, default=1.0, help="[llama-server] 어댑터 세기. 1=학습 모델, 0=베이스 모델")
     ap.add_argument("--lora-id", type=int, default=0, help="[llama-server] 어댑터 순번 (첫 번째 --lora 가 0)")
     ap.add_argument("--limit", type=int, default=600, help="챗봇 평가 레코드 수 (기본 600 = 6종 x 100건, 노트북 EVAL_LIMIT 과 같게. 0 이면 전부)")
-    ap.add_argument("--num-ctx", type=int, default=8192, help="[ollama] 컨텍스트 길이 (llama-server 는 서버 실행 옵션 -c 를 씀)")
+    ap.add_argument("--num-ctx", type=int, default=32768, help="[ollama] 컨텍스트 길이 (llama-server 는 서버 실행 옵션 -c 를 씀)")
     ap.add_argument("--prompt-style", choices=list(prompts.ANALYSIS_PROMPT_STYLES), default="short",
                     help="분석 프롬프트 길이 (long/short). 어댑터를 학습할 때 쓴 값과 같게 - 이 프로젝트는 short 로 통일 (기본 short)")
     a = ap.parse_args(argv)

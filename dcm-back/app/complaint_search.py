@@ -115,7 +115,7 @@ def search_batches(query: str, rows: list[dict]) -> list[list[dict]]:
     # Byte-level BPE token counts cannot exceed UTF-8 byte counts. Keep a
     # conservative byte budget including prompt, JSON and chat envelope; unlike
     # character truncation this includes every content segment in some batch.
-    budget = min(settings.RAG_NUM_CTX, 8192) - 768 - 512
+    budget = min(settings.RAG_NUM_CTX, 32768) - 768 - 512
     prompt_bytes = len(SEARCH_PROMPT.encode('utf-8'))
 
     def payload_size(batch):
@@ -155,7 +155,7 @@ async def classify_batch(query: str, batch: list[dict]) -> dict[int, str]:
             response = await client.post(settings.RAG_OLLAMA_URL + '/api/chat', json={
                 'model': settings.RAG_LLM_MODEL, 'stream': False, 'think': False,
                 'format': schema, 'keep_alive': '2m',
-                'options': {'temperature': 0, 'num_ctx': min(settings.RAG_NUM_CTX, 8192), 'num_predict': prediction_tokens},
+                'options': {'temperature': 0, 'num_ctx': min(settings.RAG_NUM_CTX, 32768), 'num_predict': prediction_tokens},
                 'messages': [{'role': 'system', 'content': SEARCH_PROMPT}, {'role': 'user', 'content': json.dumps(
                     {'query': query, 'complaints': batch}, ensure_ascii=False)}],
             })

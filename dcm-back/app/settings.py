@@ -47,7 +47,8 @@ LLM_ADAPTER_TASKS = frozenset(t.strip() for t in os.getenv("LLM_ADAPTER_TASKS", 
 LLM_TIMEOUT_MS = int(os.getenv("LLM_TIMEOUT_MS", "600000"))
 # LLM 컨텍스트 길이 (민원 분석·챗봇·CSV 매핑 공통). 분석 프롬프트 고정 부분(약 3,000자) + 원문(최대 1,500자) + 출력(512토큰)이
 # 들어가야 하므로 8192 를 기본으로 합니다. 로그의 prompt_eval_count 를 보고 조정하세요.
-LLM_NUM_CTX = int(os.getenv("LLM_NUM_CTX", "8192"))
+#8192로 하면 초과 오류가 너무 자주 발생해서 더 넉넉하게 32768로 수정
+LLM_NUM_CTX = int(os.getenv("LLM_NUM_CTX", "32768"))
 LLM_IMPORT_ENABLED = os.getenv("LLM_IMPORT_ENABLED", "true").lower() == "true"
 LLM_IMPORT_CONCURRENCY = max(1, int(os.getenv("LLM_IMPORT_CONCURRENCY", "1")))
 CSV_LLM_CONFIDENCE_THRESHOLD = min(1.0, max(0.0, float(os.getenv("CSV_LLM_CONFIDENCE_THRESHOLD", "0.5"))))
