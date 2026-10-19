@@ -27,7 +27,7 @@ async def aiFAQ(content: str, is_described: bool) -> dict:
     if vector:
         rows = fetch_all(
             f"""
-                SELECT SUBSTRING(content, 1, 3000) AS content
+                SELECT SUBSTRING(content, 1, 30000) AS content
                 FROM department_documents 
                 WHERE deleted_at IS NULL 
                 ORDER BY embedding <=> %s::vector 
