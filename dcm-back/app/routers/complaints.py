@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import os
+import sys
 from typing import Annotated, Any
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Path, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -571,10 +572,14 @@ async def chatAI(chatBody: ChatRequestBody, actor: Annotated[dict, Depends(actor
 #시간이 매우 오래 걸리기 때문에 개발 단계에서는 일단 CHUNK_ROW_SIZE=5 정도로 타협
 #CHUNK_ROW_SIZE를 크게 설정할 수록 LLM이 이를 잘 받아들이지 못해 답변이 고장날 가능성이 높아집니다.
 
-CHUNK_ROW_SIZE = 5
+CHUNK_ROW_SIZE = 1
 
+
+#7분야 민원 사례 csv를 넣는 경우 type에 0 넣기
+#법률 csv 넣는경우 type에 1 넣기
 @router.post("/documents", status_code=201)
 async def create_department_document(
+    type:int=0,
     file: UploadFile = File(...),
     actor: Annotated[dict, Depends(actor_from_auth)] = None
 ):
@@ -604,6 +609,14 @@ async def create_department_document(
         f.write(contents)
         
     created_by = actor.get("sub") or actor.get("owner_id")
+
+    maxInt = sys.maxsize
+    while True:
+        try:
+            csv.field_size_limit(maxInt)
+            break
+        except OverflowError:
+            maxInt = int(maxInt / 2)
     
     # 3. CSV 행(Row)을 먼저 모두 읽어 청크 단위로 분할
     csv_reader = csv.reader(io.StringIO(decoded_content))
@@ -611,29 +624,41 @@ async def create_department_document(
     
     chunks = []
     current_chunk = []
-    
+    valid_results =[]
+    version = 0
     for row in csv_reader:
-        if len(row) < 8:
-            continue
-        title = row[5]
-        question = row[6]
-        answer = row[7]
-        
-        row_text = f"[title:{title} | question:{question} | answer: {answer}]"
-        current_chunk.append(row_text)
-        
-        if len(current_chunk) >= CHUNK_ROW_SIZE:
-            chunks.append(current_chunk)
-            current_chunk = []
+        if(type==0):
+            title = row[5]
+            question = row[6]
+            answer = row[7]
+            
+            row_text = f"[title:{title} | question:{question} | answer: {answer}]"
+            current_chunk.append(row_text)
+
+            if len(current_chunk) >= CHUNK_ROW_SIZE:
+                chunks.append(current_chunk)
+                current_chunk = []
+
+        elif(type==1):
+            title = row[2]
+            content = row[3]
+            vector = row[4]
+                        
+            row_text = f"[title:{title} | content:{content}]"
+            version +=1
+            doc_title = f"{original_name[:-4]}_{version}.csv"
+
+            valid_results.append({
+                        "new_id": str(uuid4()),
+                        "doc_title": doc_title,
+                        "version": version,
+                        "chunk_content": row_text,
+                        "vector_str": vector
+                    })
+
             
     if current_chunk:
         chunks.append(current_chunk)
-        
-    if not chunks:
-        raise HTTPException(status_code=400, detail="처리할 유효한 데이터가 없습니다.")
-
-    # 4. 개별 청크에 대한 임베딩을 비동기 병렬로 처리하는 함수
-    semaphore = asyncio.Semaphore(5)  # 동시에 처리할 최대 Ollama 요청 수
 
     async def process_chunk(client: httpx.AsyncClient, chunk_texts: list[str], version: int) -> dict[str, Any]:
         valid_inputs = [text for text in chunk_texts if text.strip()]
@@ -641,7 +666,7 @@ async def create_department_document(
             return None
             
         doc_title = f"{original_name[:-4]}_{version}.csv"
-        
+
         async with semaphore:
             response = await client.post(
                 f"{OLLAMA_URL}/api/embed",
@@ -668,17 +693,23 @@ async def create_department_document(
             "chunk_content": "\n".join(valid_inputs),
             "vector_str": vector_literal(avg_vector)
         }
+    if type ==0:
+        if not chunks:
+            raise HTTPException(status_code=400, detail="처리할 유효한 데이터가 없습니다.")
+            
+        # 4. 개별 청크에 대한 임베딩을 비동기 병렬로 처리하는 함수
+        semaphore = asyncio.Semaphore(5)  # 동시에 처리할 최대 Ollama 요청 수
 
-    # 5. 모든 청크의 임베딩을 비동기로 동시에 요청
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        tasks = [
-            process_chunk(client, chunk, idx + 1) 
-            for idx, chunk in enumerate(chunks)
-        ]
-        processed_results = await asyncio.gather(*tasks)
+        # 5. 모든 청크의 임베딩을 비동기로 동시에 요청
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            tasks = [
+                            process_chunk(client, chunk, idx + 1)
+                            for idx, chunk in enumerate(chunks)
+            ]
+            processed_results = await asyncio.gather(*tasks)
 
-    # None 결과 필터링
-    valid_results = [res for res in processed_results if res is not None]
+        # None 결과 필터링
+        valid_results = [res for res in processed_results if res is not None]
     
     if not valid_results:
         raise HTTPException(status_code=400, detail="생성된 임베딩이 없습니다.")
