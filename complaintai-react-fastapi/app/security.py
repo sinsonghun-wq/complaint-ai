@@ -64,15 +64,17 @@ def actor_from_auth(authorization: str | None = Header(default=None)) -> dict[st
     if not actor:
         raise HTTPException(401, "로그인이 필요합니다.")
     user = current_account(actor)
-    return {**actor, "owner_id": str(user["owner_id"]), "role": user["account_role"], "department_id": user.get("department_id")}
+    return {"sub": str(user["id"]), "owner_id": str(user["owner_id"]), "role": user["account_role"], "department_id": user.get("department_id"), "department_name": user.get("department_name")}
 
 
 def current_account(actor: dict[str, Any]) -> dict[str, Any]:
-    user = fetch_one("SELECT id, owner_id, username, display_name, account_role, department_id, password_salt, password_hash FROM app_users WHERE id=%s", (actor["sub"],))
+    user = fetch_one("""SELECT u.id,u.owner_id,u.username,u.display_name,u.account_role,u.department_id,
+        d.name AS department_name,u.password_salt,u.password_hash
+        FROM app_users u LEFT JOIN departments d ON d.id=u.department_id WHERE u.id=%s""", (actor["sub"],))
     if not user:
         raise HTTPException(401, "계정을 찾을 수 없습니다.")
     return user
 
 
 def public_user(user: dict[str, Any]) -> dict[str, Any]:
-    return {"id": str(user["id"]), "owner_id": str(user["owner_id"]), "username": user["username"], "name": user.get("display_name") or user["username"], "role": user["account_role"], "department_id": user.get("department_id")}
+    return {"id": str(user["id"]), "owner_id": str(user["owner_id"]), "username": user["username"], "name": user.get("display_name") or user["username"], "role": user["account_role"], "department_id": user.get("department_id"), "department_name": user.get("department_name"), "can_run_global_cleanup": False}

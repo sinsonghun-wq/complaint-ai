@@ -32,6 +32,7 @@ def ensure_csv_worker() -> None:
         if not executable.is_file():
             executable = Path(sys.executable)
         flags = (subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP) if sys.platform == "win32" else 0
+        (root / "data").mkdir(parents=True, exist_ok=True)
         with (root / "data" / "csv-worker.stdout.log").open("ab") as stdout, (root / "data" / "csv-worker.stderr.log").open("ab") as stderr:
             _process = subprocess.Popen([str(executable), "-m", "app.worker"], cwd=root, stdin=subprocess.DEVNULL,
                                         stdout=stdout, stderr=stderr, creationflags=flags,

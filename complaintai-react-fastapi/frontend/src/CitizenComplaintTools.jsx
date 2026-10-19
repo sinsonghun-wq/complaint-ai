@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import ComplaintFilters, { appendComplaintFilters, citizenViewStatusLabel, normalizeComplaintFilters } from "./ComplaintFilters.jsx";
+import ComplaintFilters, { appendComplaintFilters, citizenViewStatusLabel, hasComplaintFilters, normalizeComplaintFilters } from "./ComplaintFilters.jsx";
 import "./citizenTools.css";
 
 const pageSize = 10;
@@ -156,7 +156,7 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
 
   const applyFilters = useCallback((filters) => {
     const normalized = normalizeComplaintFilters(filters);
-    if (mutationLock.current || !normalized.departments.length || !normalized.view_status) return;
+    if (mutationLock.current || !hasComplaintFilters(normalized)) return;
     searchReadSequence.current += 1;
     setListKind("normal"); setAppliedFilters(normalized); setFilterInitial(normalized); setFiltersOpen(false);
     setRecords([]); setTotal(0); setPage(1); showList();
@@ -180,7 +180,7 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
       if (request.state === "failed") setError(request.error || "민원을 검색하지 못했습니다. 다시 검색해 주세요.");
     } else if (request.intent === "filter") {
       const normalized = normalizeComplaintFilters(request.filters);
-      if (normalized.departments.length && normalized.view_status) applyFilters(normalized);
+      if (hasComplaintFilters(normalized)) applyFilters(normalized);
       else { clearFilters(); setFilterInitial(normalized); setFiltersOpen(true); }
     } else if (request.intent === "create") {
       newComplaint(request.draft || { title: request.title, content: request.content });
@@ -367,7 +367,7 @@ export default function CitizenComplaintTools({ api, request, onContextChange, o
             {filtersOpen && <ComplaintFilters initialValue={filterInitial || appliedFilters} onApply={applyFilters} onClear={clearFilters} busy={busy || loading} compact />}
             {listKind === "normal" && (
               <>
-                {appliedFilters && <p className="citizen-tools-filter-summary" role="status">조회 조건: {appliedFilters.departments.join(", ")} · {({ unassigned: "미접수", in_progress: "접수 중", completed: "접수 완료" })[appliedFilters.view_status]}</p>}
+                {appliedFilters && <p className="citizen-tools-filter-summary" role="status">조회 조건: {appliedFilters.departments.length ? appliedFilters.departments.join(", ") : "전체 부서"} · {({ unassigned: "미접수", in_progress: "접수 중", completed: "접수 완료" })[appliedFilters.view_status] || "전체 상태"}</p>}
                 {!loading && records.length === 0 && <p className="citizen-tools-muted">작성한 민원이 없습니다.</p>}
                 {renderRows(records)}
                 {renderPagination(total, page, setPage)}

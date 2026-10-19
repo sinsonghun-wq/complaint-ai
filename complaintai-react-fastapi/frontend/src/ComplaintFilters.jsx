@@ -22,6 +22,11 @@ export function normalizeComplaintFilters(value) {
   };
 }
 
+export function hasComplaintFilters(value) {
+  const normalized = normalizeComplaintFilters(value);
+  return normalized.departments.length > 0 || Boolean(normalized.view_status);
+}
+
 export function appendComplaintFilters(params, filters) {
   const normalized = normalizeComplaintFilters(filters);
   params.delete("departments"); params.delete("view_status");
@@ -35,7 +40,7 @@ export default function ComplaintFilters({ initialValue, onApply, onClear, busy 
   const [draft, setDraft] = useState(() => normalizeComplaintFilters(initialValue));
   const initialKey = JSON.stringify(normalizeComplaintFilters(initialValue));
   useEffect(() => { setDraft(JSON.parse(initialKey)); }, [initialKey]);
-  const valid = draft.departments.length > 0 && Boolean(draft.view_status);
+  const valid = hasComplaintFilters(draft);
   const submit = (event) => {
     event.preventDefault();
     if (!busy && valid) onApply?.(normalizeComplaintFilters(draft));
@@ -47,9 +52,9 @@ export default function ComplaintFilters({ initialValue, onApply, onClear, busy 
   return <section className={`complaint-filters${compact ? " complaint-filters-compact" : ""}`} aria-label="민원 조회 조건">
     {!compact && <h3>어떤 민원들을 조회하시겠습니까?</h3>}
     <form onSubmit={submit}>
-      <fieldset disabled={busy}><legend>부서 선택</legend><p>한 개 이상 선택해 주세요. 선택한 부서 중 하나에 해당하면 표시합니다.</p><div className="complaint-filters-departments">{departmentLabels.map((department, index) => <label key={department} htmlFor={`${id}-department-${index}`}><input id={`${id}-department-${index}`} type="checkbox" checked={draft.departments.includes(department)} onChange={(event) => setDraft((current) => ({ ...current, departments: event.target.checked ? [...current.departments, department] : current.departments.filter((name) => name !== department) }))} /><span>{department}</span></label>)}</div></fieldset>
-      <fieldset disabled={busy}><legend>처리 상태</legend><div className="complaint-filters-statuses">{complaintViewStatuses.map(({ value, label }) => <label key={value} htmlFor={`${id}-${value}`}><input id={`${id}-${value}`} type="radio" name={`${id}-view-status`} value={value} checked={draft.view_status === value} onChange={() => setDraft((current) => ({ ...current, view_status: value }))} /><span>{label}</span></label>)}</div></fieldset>
-      <p className="complaint-filters-help">미접수를 선택하면 선택한 부서와 관계없이 본인의 부서 미정 민원을 모두 조회합니다. 접수 중은 담당 부서가 정해졌으며 공식 답변이 아직 전달되지 않은 민원입니다.</p>
+      <fieldset disabled={busy}><legend>부서 선택</legend><p>선택하지 않으면 전체 부서를 조회합니다. 여러 부서를 선택하면 선택한 부서 중 하나에 해당하는 민원을 표시합니다.</p><div className="complaint-filters-departments">{departmentLabels.map((department, index) => <label key={department} htmlFor={`${id}-department-${index}`}><input id={`${id}-department-${index}`} type="checkbox" checked={draft.departments.includes(department)} onChange={(event) => setDraft((current) => ({ ...current, departments: event.target.checked ? [...current.departments, department] : current.departments.filter((name) => name !== department) }))} /><span>{department}</span></label>)}</div></fieldset>
+      <fieldset disabled={busy}><legend>처리 상태</legend><div className="complaint-filters-statuses">{[{ value: "", label: "전체 상태" }, ...complaintViewStatuses].map(({ value, label }) => <label key={value} htmlFor={`${id}-${value}`}><input id={`${id}-${value}`} type="radio" name={`${id}-view-status`} value={value} checked={draft.view_status === value} onChange={() => setDraft((current) => ({ ...current, view_status: value }))} /><span>{label}</span></label>)}</div></fieldset>
+      <p className="complaint-filters-help">부서 또는 처리 상태 중 하나만 선택해도 조회할 수 있습니다. 전체 상태를 선택하면 상태를 제한하지 않습니다. 미접수를 선택하면 선택한 부서와 관계없이 본인의 부서 미정 민원을 모두 조회합니다. 접수 중은 담당 부서가 정해졌으며 공식 답변이 아직 전달되지 않은 민원입니다.</p>
       <div className="complaint-filters-actions"><button type="submit" disabled={busy || !valid}>조회하기</button><button type="button" disabled={busy} onClick={clear}>조건 초기화</button></div>
     </form>
   </section>;

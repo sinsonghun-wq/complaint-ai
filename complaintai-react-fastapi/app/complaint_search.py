@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from . import settings
 from .ai import CATEGORIES
 from .db import fetch_all
+from .departments import BY_NAME
 from .security import actor_from_auth
 
 router = APIRouter(tags=['내 민원 검색'])  # Mounted inside the recommendation router.
@@ -77,18 +78,24 @@ class SearchUnavailable(RuntimeError):
 
 
 def filter_clause(departments: list[str], view_status: str) -> tuple[str, list]:
-    if not departments or any(department not in CATEGORIES for department in departments):
-        raise HTTPException(400, '실제 부서를 한 개 이상 선택해 주세요.')
-    if view_status not in ('unassigned', 'in_progress', 'completed'):
-        raise HTTPException(400, '민원 상태는 미접수, 진행중, 완료 중 하나를 선택해 주세요.')
+    if any(department not in CATEGORIES for department in departments):
+        raise HTTPException(400, '실제 부서 중에서 선택해 주세요.')
+    if view_status not in ('', 'unassigned', 'in_progress', 'completed'):
+        raise HTTPException(400, '민원 상태는 미접수, 접수 중, 접수 완료 중 하나를 선택해 주세요.')
+    if not departments and not view_status:
+        raise HTTPException(400, '부서 또는 처리 상태 중 하나 이상을 선택해 주세요.')
     base = " AND deleted_at IS NULL AND complaint_status IS DISTINCT FROM '취소'"
     sent = "EXISTS (SELECT 1 FROM complaint_responses vr WHERE vr.complaint_id=complaints.id AND vr.response_state='sent')"
     if view_status == 'unassigned':
-        # A department cannot yet be inferred for an unclassified complaint.
-        return base + " AND NULLIF(BTRIM(category), '') IS NULL", []
-    return (base + " AND NULLIF(BTRIM(category), '') IS NOT NULL AND category=ANY(%s) AND "
-            + (sent if view_status == 'completed' else 'NOT ' + sent)), [list(dict.fromkeys(departments))]
-
+        # Preserve the existing policy: unassigned complaints have no department.
+        return base + " AND department_id IS NULL", []
+    args = []
+    if departments:
+        base += " AND department_id=ANY(%s)"
+        args.append(list(dict.fromkeys(BY_NAME[name]["id"] for name in departments)))
+    if view_status:
+        base += " AND department_id IS NOT NULL AND " + (sent if view_status == 'completed' else 'NOT ' + sent)
+    return base, args
 
 def owned_corpus(owner_id: str) -> list[dict]:
     # No LIMIT/OFFSET: model batches must cover even complaints after the first page.

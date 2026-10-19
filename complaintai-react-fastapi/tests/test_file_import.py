@@ -10,7 +10,8 @@ from fastapi.testclient import TestClient
 from fastapi import HTTPException
 from openpyxl import Workbook
 
-from app.main import app, csv_encoding, csv_rows, spreadsheet_records, _records_from_case_pages, _records_from_hwp_text
+from app.main import app
+from app.services.parser import csv_encoding, csv_rows, spreadsheet_records, _records_from_case_pages, _records_from_hwp_text
 from app.security import actor_from_auth
 from app.db import connection
 
@@ -44,7 +45,7 @@ class FileImportTests(unittest.TestCase):
     def test_invalid_csv_returns_readable_422(self):
         path = self.path / "invalid.csv"
         path.write_bytes(codecs.BOM_UTF8 + b"title,content\n\xff,broken")
-        with patch("app.main.save_upload", new=AsyncMock(return_value=(path, ".csv"))):
+        with patch("app.routers.complaints.save_upload", new=AsyncMock(return_value=(path, ".csv"))):
             result = self.client.post("/api/imports", files={"file": ("invalid.csv", b"invalid", "text/csv")})
         self.assertEqual(result.status_code, 422)
         self.assertIn("UTF-8", result.json()["detail"])
@@ -60,7 +61,7 @@ class FileImportTests(unittest.TestCase):
                 sheet.append([f"도로 {index}-{number}", "도로에 구멍이 있습니다. 보수가 필요합니다."])
         workbook.save(path)
         self.assertEqual(len(spreadsheet_records(path, ".xlsx")), 1200)
-        with patch("app.main.save_upload", new=AsyncMock(return_value=(path, ".xlsx"))):
+        with patch("app.routers.complaints.save_upload", new=AsyncMock(return_value=(path, ".xlsx"))):
             result = self.client.post("/api/intake", files={"file": ("many.xlsx", b"test")})
         self.assertEqual(result.status_code, 200)
         records = result.json()["complaints"]
@@ -75,13 +76,13 @@ class FileImportTests(unittest.TestCase):
 
     def test_batch_saves_every_record_in_500_row_chunks(self):
         save = AsyncMock(side_effect=lambda records, actor: (len(records), 0))
-        with patch("app.main.save_records", new=save):
+        with patch("app.routers.complaints.save_records", new=save):
             result = self.client.post("/api/complaints/batch", json={"complaints": [{"title": "민원", "content": "도로 보수 요청"}] * 1201})
         self.assertEqual(result.status_code, 201)
         self.assertEqual(result.json()["saved"], 1201)
         self.assertEqual([len(call.args[0]) for call in save.await_args_list], [500, 500, 201])
 
-    def test_global_test_delete_archives_all_statuses_without_touching_real_data(self):
+    def test_disabled_global_delete_preserves_all_statuses_without_touching_real_data(self):
         # PostgreSQL session-local tables shadow real tables and vanish on close.
         with connection() as db:
             with db.cursor() as cur:
@@ -91,42 +92,40 @@ class FileImportTests(unittest.TestCase):
                     cur.execute("INSERT INTO complaints(id,category,complaint_status) VALUES(%s,%s,%s)", (identifier, "교통·국토" if identifier == 1 else "환경·위생", status))
                     cur.execute("INSERT INTO complaint_responses VALUES(%s,%s)", (identifier, "sent" if status == "완료" else "draft"))
             db.commit()
-            with patch("app.main.connection", side_effect=lambda: nullcontext(db)):
+            with patch("app.routers.complaints.connection", side_effect=lambda: nullcontext(db)):
                 result = self.client.delete("/api/complaints/department/all")
-            self.assertEqual(result.status_code, 200)
-            self.assertEqual(result.json()["deleted"], 4)
+            self.assertEqual(result.status_code, 403)
             with db.cursor() as cur:
                 cur.execute("SELECT COUNT(*) AS count FROM complaints WHERE deleted_at IS NULL")
-                self.assertEqual(cur.fetchone()["count"], 0)
-                cur.execute("SELECT COUNT(*) AS count FROM complaints WHERE deleted_at IS NOT NULL AND complaint_status='취소'")
                 self.assertEqual(cur.fetchone()["count"], 4)
+                cur.execute("SELECT COUNT(*) AS count FROM complaints WHERE deleted_at IS NOT NULL AND complaint_status='취소'")
+                self.assertEqual(cur.fetchone()["count"], 0)
                 cur.execute("SELECT response_state FROM complaint_responses")
-                self.assertEqual(cur.fetchall(), [{"response_state": "sent"}])
+                self.assertEqual(len(cur.fetchall()), 4)
 
-    def test_permanent_all_requires_password_and_deletes_all_departments(self):
+    def test_disabled_permanent_all_preserves_all_departments(self):
         with connection() as db:
             with db.cursor() as cur:
                 cur.execute("CREATE TEMP TABLE complaints(id INT PRIMARY KEY, category TEXT, complaint_status TEXT, deleted_at TIMESTAMPTZ)")
                 cur.execute("INSERT INTO complaints VALUES(1,'교통·국토','취소',NOW()),(2,'교통·국토','완료',NOW()),(3,'환경·위생','취소',NOW()),(4,'교통·국토','접수',NULL)")
             db.commit()
-            with patch("app.main.connection", side_effect=lambda: nullcontext(db)), patch("app.main.check_password") as check:
+            with patch("app.routers.complaints.connection", side_effect=lambda: nullcontext(db)), patch("app.routers.complaints.check_password") as check:
                 result = self.client.request("DELETE", "/api/complaints/deleted/all", json={"password": "test-password"})
-            self.assertEqual(result.status_code, 200)
-            self.assertEqual(result.json()["permanently_deleted"], 3)
-            self.assertEqual(check.call_args.args[1], "test-password")
+            self.assertEqual(result.status_code, 403)
+            check.assert_not_called()
             with db.cursor() as cur:
                 cur.execute("SELECT id FROM complaints ORDER BY id")
-                self.assertEqual(cur.fetchall(), [{"id": 4}])
+                self.assertEqual(cur.fetchall(), [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}])
 
     def test_permanent_all_rejects_regular_users(self):
         app.dependency_overrides[actor_from_auth] = lambda: {"role": "user"}
-        with patch("app.main.connection") as connect:
+        with patch("app.routers.complaints.connection") as connect:
             result = self.client.request("DELETE", "/api/complaints/deleted/all", json={"password": "test-password"})
         self.assertEqual(result.status_code, 403)
         connect.assert_not_called()
 
     def test_permanent_all_stops_before_delete_on_wrong_password(self):
-        with patch("app.main.check_password", side_effect=HTTPException(403, "비밀번호가 일치하지 않습니다.")), patch("app.main.connection") as connect:
+        with patch("app.routers.complaints.check_password", side_effect=HTTPException(403, "비밀번호가 일치하지 않습니다.")), patch("app.routers.complaints.connection") as connect:
             result = self.client.request("DELETE", "/api/complaints/deleted/all", json={"password": "wrong-password"})
         self.assertEqual(result.status_code, 403)
         connect.assert_not_called()

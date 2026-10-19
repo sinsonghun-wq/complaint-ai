@@ -1,6 +1,12 @@
 # 개발 DB 구조 동기화
 
+**2026-10-16 부서 ID 변경:** 기존 데이터가 있으면 init.sql 대신 [부서 ID 통일 안내](../docs/department-id-permissions-2026-10-16.md)의 `migrate_department_ids.py`를 사용한다. departments의 고정 ID 1~7과 계정·민원·답변·문서의 부서 외래키를 추가하며 데이터를 보존한다. 새 DB의 init.sql에는 동일한 ID 구조가 포함된다. 개발 계정은 seed_demo_accounts.sql에서 별도로 생성한다.
+
+**2026-10-19 삭제 보관함 변경:** 부서 ID 이전이 완료된 기존 DB에는 `migrations/20261019_trash_archive.sql`을 사용한다. FastAPI 시작 시 자동 적용되므로 보관함 업데이트를 위해 `init.sql`로 데이터를 지울 필요가 없다. `original_owner_user_id`, `restored_at`, `trash_previous_status`와 삭제 보관함용 부분 인덱스를 추가하고, 삭제 시각이 없던 기존 취소 민원을 보관함으로 옮긴다. 이 이전 SQL 자체는 영구 삭제하지 않는다. 10,000건 보관/유입 시 자동 정리/관리자 전용 복원 및 검증 방법은 [삭제 보관함 안내](../docs/trash-archive-2026-10-19.md)를 참고한다.
+
 `init.sql`은 PostgreSQL 16 + pgvector 기준의 **전체 재생성용** SQL이다. 기존 테이블이 있으면 삭제하고 최신 컬럼·관계·인덱스로 다시 생성한다. 스키마 동기화와 데이터 동기화는 별도 작업이다.
+
+**2026-10-19 원문 중복 제약:** 기존 DB는 `migrations/20261019_exact_dedup.sql`과 앱의 `ensure_dedup_schema()`로 추가 이전한다(FastAPI/CSV 워커 시작 시 자동). 마스킹 전 지문·글자열 후보 지문·공백 프로필과 활성 민원 부분 고유 인덱스를 추가한다. 관리자 공용 소유자 NULL도 중복으로 처리하며, 이미 저장된 중복이나 답변은 삭제하지 않는다. SQL만 실행하면 컬럼/인덱스가 준비되고 기존 지문 보충은 앱에서 수행한다. 관련 정책·검증 및 이미 마스킹된 과거 원문 제한은 [원문 중복 보완 안내](../docs/exact-dedup-fix-2026-10-19.md)를 확인한다.
 
 ## 반드시 확인
 

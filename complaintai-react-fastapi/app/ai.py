@@ -13,6 +13,7 @@ import httpx
 from . import categories as category_defs
 from . import prompts
 from . import llm
+from .dedup import identity
 from .settings import ACTIVE_EMBEDDING_MODEL, EMBEDDING_API_URL, EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT_MS, LLM_MODEL, LLM_NUM_CTX, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
 
 # 카테고리 이름·설명·키워드는 categories.py 한 곳에서 관리합니다.
@@ -38,13 +39,14 @@ def redact(value: Any) -> str:
 
 
 def fallback(title: str, content: str, reason: str = "LLM을 사용할 수 없어 규칙 기반 처리로 저장했습니다.") -> dict[str, Any]:
+    raw_identity = identity(content)
     content = redact(content)
     sentences = re.findall(r"[^.!?。]+[.!?。]?", content) or [content]
     summary = clean(" ".join(sentences[:3]))[:700]
     source = f"{title} {summary}".lower()
     ranked = sorted(((category, sum(word in source for word in words)) for category, words in KEYWORDS.items()), key=lambda item: item[1], reverse=True)
     category, score = ranked[0]
-    return {"title": clean(title) or summary[:40] or "제목 없음", "content": content, "summary": summary, "key_points": ["민원 대상과 발생 상황 확인", "생활 불편 및 안전 문제 검토", "민원인의 요청사항 확인"], "urgency": "high" if re.search(r"위험|사고|긴급|화재|붕괴", content) else "medium", "needs_review": len(content) < 20, "review_reason": "내용이 부족하여 검토가 필요합니다." if len(content) < 20 else None, "category": category if score else "기타", "confidence": 0.8 if score >= 3 else (0.6 if score else 0.3), "reason": reason, "keywords": [word for word in KEYWORDS[category] if word in source][:5] if score else [], "processing_mode": "fallback", "model": None, "prompt_version": PROMPT_VERSION}
+    return {"_raw_identity": raw_identity, "title": clean(title) or summary[:40] or "제목 없음", "content": content, "summary": summary, "key_points": ["민원 대상과 발생 상황 확인", "생활 불편 및 안전 문제 검토", "민원인의 요청사항 확인"], "urgency": "high" if re.search(r"위험|사고|긴급|화재|붕괴", content) else "medium", "needs_review": len(content) < 20, "review_reason": "내용이 부족하여 검토가 필요합니다." if len(content) < 20 else None, "category": category if score else "기타", "confidence": 0.8 if score >= 3 else (0.6 if score else 0.3), "reason": reason, "keywords": [word for word in KEYWORDS[category] if word in source][:5] if score else [], "processing_mode": "fallback", "model": None, "prompt_version": PROMPT_VERSION}
 
 
 def prompt(title: str, content: str) -> str:

@@ -63,7 +63,7 @@ async def selectComplaintT(content: str, config: RunnableConfig) -> dict:
                     TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at, 
                     complaint_status 
                 FROM complaints 
-                WHERE owner_user_id = %s 
+                WHERE owner_user_id = %s AND deleted_at IS NULL AND complaint_status<>'취소'
                 ORDER BY embedding <=> %s::vector 
                 LIMIT {COMPLAINT_ROW_LIMIT};
             """,

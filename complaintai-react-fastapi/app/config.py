@@ -1,8 +1,9 @@
 from pathlib import Path
 from .ai import CATEGORIES
+from .departments import CATALOG
 from .settings import CSV_LLM_CONFIDENCE_THRESHOLD, CSV_MAX_UPLOAD_BYTES, CSV_RULE_OTHER_MIN_CONTENT_CHARS, DOCUMENT_MAX_UPLOAD_BYTES, FILE_STORAGE_DIR, IMPORT_PROGRESS_ROWS, LLM_IMPORT_CONCURRENCY, LLM_IMPORT_ENABLED, MAX_BATCH_SIZE, TESSDATA_DIR, TESSERACT_CMD, WEB_ORIGINS
 
-DEPARTMENT_CATEGORIES = {category: [category] for category in CATEGORIES}
+DEPARTMENT_CATEGORIES = {department["id"]: [department["name"]] for department in CATALOG}
 STATUSES = ["접수", "진행중", "완료", "취소"]
 STATIC_DIR = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 FILE_STORAGE_DIR.mkdir(parents=True, exist_ok=True)

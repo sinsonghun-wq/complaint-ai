@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import CitizenComplaintTools from './CitizenComplaintTools.jsx';
-import ComplaintFilters from './ComplaintFilters.jsx';
+import ComplaintFilters, { hasComplaintFilters, normalizeComplaintFilters } from './ComplaintFilters.jsx';
 
 const stageLabels = {
   routing: '요청하신 답변이나 기능을 확인하고 있어요.',
@@ -89,9 +89,10 @@ export function useRecommendations(api) {
   const cancelLookup = useCallback(() => { lookupRef.current = null; setLookupPrompt(null); }, []);
   const applyLookupFilters = useCallback((filters, promptId) => {
     if (requestLock.current || lookupRef.current?.id !== promptId || lookupRef.current?.kind !== 'filter') return;
-    if (!filters?.departments?.length || !filters.view_status) return;
-    openTool({ intent: 'filter', filters });
-    setMessages((previous) => previous.map((item) => item.id === promptId ? { ...item, filters } : item));
+    const normalized = normalizeComplaintFilters(filters);
+    if (!hasComplaintFilters(normalized)) return;
+    openTool({ intent: 'filter', filters: normalized });
+    setMessages((previous) => previous.map((item) => item.id === promptId ? { ...item, filters: normalized } : item));
   }, [openTool]);
 
   const searchComplaints = useCallback(async (query, retryId = null) => {
@@ -427,7 +428,7 @@ export default function AIRecommendations({ recommendation, api = recommendation
             <button disabled={busy} onClick={newConversation}>새 대화 시작</button>
             <button onClick={() => { closeOptions(); openTool('create'); }}>새로운 민원 작성하기<small>오른쪽 도구에서 작성하고 접수</small></button>
             <button onClick={() => { closeOptions(); openTool('list'); }}>작성된 민원에서 선택하기<small>오른쪽 도구에서 확인·수정·삭제</small></button>
-            <button disabled={busy} onClick={() => { closeOptions(); recommendation.promptLookup('filter'); }}>특정 민원 조회<small>부서와 처리 상태로 골라 보기</small></button>
+            <button disabled={busy} onClick={() => { closeOptions(); recommendation.promptLookup('filter'); }}>특정 민원 조회<small>부서나 처리 상태로 골라 보기</small></button>
             <details className="ai-chat-usage"><summary>이용 안내</summary><p>대화로 민원 작성이나 확인을 요청하면 오른쪽 도구를 열어 드립니다. ‘조회하고 싶어’는 부서·상태 선택, ‘검색하고 싶어’는 다음 메시지 한 번으로 작성한 민원을 찾습니다. 실제 접수·수정·삭제는 도구 창에서 버튼으로 확정합니다.</p><p>다른 메뉴로 이동해도 대화는 유지됩니다. 새로고침하거나 로그아웃하면 화면의 대화는 초기화됩니다.</p></details>
           </div>
         </details>

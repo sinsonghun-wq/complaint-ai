@@ -2,34 +2,83 @@ import asyncio
 import json
 from typing import Any
 import psycopg
+import logging
 
 from ..db import connection
 from ..ai import ACTIVE_EMBEDDING_MODEL, CATEGORIES, analyze, embeddingForSelect, fallback, fingerprint
 from ..dependencies import owner_id, vector_literal
-from app.settings import EMBEDDING_MODEL
+from ..dedup import identity, item_identity, find_duplicate, lock_identities
 
 classification_slots = asyncio.Semaphore(1)
 classification_tasks: set[asyncio.Task] = set()
 
+
+class ImportVectorPolicy:
+    """Optional file index: do not repeatedly compute vectors we cannot store.
+
+    This is local to one import batch/job; the embedding function, model and
+    independent RAG index are deliberately untouched.
+    """
+    def __init__(self, embedder=None):
+        self.embedder = embedder or embeddingForSelect
+        self.warning = None
+
+    async def vector(self, record):
+        if self.warning:
+            record["_embedding_warning"] = self.warning
+            return None
+        vector = await self.embedder(record["content"])
+        if vector and len(vector) != 1536:
+            self.warning = f"임베딩 {len(vector)}차원과 민원 DB 1536차원이 달라 벡터 저장을 보류했습니다."
+            record["_embedding_warning"] = self.warning
+            return None
+        return vector
+
+
 def insert_complaint(conn: psycopg.Connection, record: dict[str, Any], source_file: str | None, source_row: int | None, stored_owner: str | None, vector: list[float] | None = None) -> bool:
-    metadata = json.dumps({key: record.get(key) for key in ["key_points", "urgency", "needs_review", "review_reason", "reason", "keywords"]}, ensure_ascii=False)
+    profile = record.get('_raw_identity') or identity(record['content'])
+    lock_identities(conn, [profile], stored_owner)
+    if find_duplicate(conn, profile, stored_owner):
+        return False
+    details = {key: record.get(key) for key in ["key_points", "urgency", "needs_review", "review_reason", "reason", "keywords"]}
+    if record.get("_embedding_warning"):
+        details["embedding_warning"] = record["_embedding_warning"]
+    # Import success must not depend on the optional search index. Never pad or
+    # truncate vectors, or change the configured embedding model / RAG index.
+    if vector and len(vector) != 1536:
+        details["embedding_warning"] = f"임베딩 {len(vector)}차원과 민원 DB 1536차원이 달라 벡터 저장을 보류했습니다."
+        logging.getLogger(__name__).debug(details["embedding_warning"])
+        vector = None
+    metadata = json.dumps(details, ensure_ascii=False)
     with conn.cursor() as cur:
-        cur.execute("""INSERT INTO complaints (title,content,summary,category,source_file,source_row,content_fingerprint,processing_mode,llm_model,embedding_model,prompt_version,analysis_metadata,embedding,owner_user_id)
-            SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector,%s
-            WHERE NOT EXISTS (SELECT 1 FROM complaints WHERE content_fingerprint=%s AND deleted_at IS NULL AND complaint_status<>'취소' AND owner_user_id IS NOT DISTINCT FROM %s) RETURNING id""",
-            (record["title"], record["content"], record["summary"], record["category"], source_file, source_row, fingerprint(record["content"]), record.get("processing_mode", "fallback"), record.get("model"), ACTIVE_EMBEDDING_MODEL if vector else None, record.get("prompt_version"), metadata, vector_literal(vector), stored_owner, fingerprint(record["content"]), stored_owner))
+        cur.execute("""INSERT INTO complaints (title,content,summary,category,source_file,source_row,content_fingerprint,processing_mode,llm_model,embedding_model,prompt_version,analysis_metadata,embedding,owner_user_id,
+            raw_content_fingerprint,dedup_compact_fingerprint,dedup_profile)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector,%s,%s,%s,%s::jsonb)
+            ON CONFLICT DO NOTHING RETURNING id""",
+            (record["title"], record["content"], record["summary"], record["category"], source_file, source_row, fingerprint(record["content"]), record.get("processing_mode", "fallback"), record.get("model"), ACTIVE_EMBEDDING_MODEL if vector else None, record.get("prompt_version"), metadata, vector_literal(vector), stored_owner,
+             profile['raw'], profile['compact'], json.dumps(profile)))
         return cur.fetchone() is not None
 
 async def save_records(records: list[dict[str, Any]], actor: dict[str, Any], source_file: str | None = None) -> tuple[int, int]:
     saved = skipped = 0
+    vectors = ImportVectorPolicy()
+    profiles = [item_identity(item) for item in records]
     with connection() as conn:
-        for item in records:
+        lock_identities(conn, profiles, owner_id(actor))
+        for item, profile in zip(records, profiles):
+            # Exact duplicates need neither another LLM call nor another vector.
+            existing = find_duplicate(conn, profile, owner_id(actor))
+            if existing:
+                skipped += 1
+                continue
             record = await analyze(str(item.get("title", "")), str(item.get("content", ""))) if item.get("use_ai") else fallback(str(item.get("title", "")), str(item.get("content", "")))
             if item.get("category") in CATEGORIES and not item.get("use_ai"):
                 record["category"] = item["category"]
             if not record["content"]:
                 continue
-            was_saved = insert_complaint(conn, record, item.get("source_file") or source_file, item.get("source_row"), owner_id(actor), await embeddingForSelect(record["content"]))
+            record['_raw_identity'] = profile
+            vector = await vectors.vector(record)
+            was_saved = insert_complaint(conn, record, item.get("source_file") or source_file, item.get("source_row"), owner_id(actor), vector)
             saved += int(was_saved); skipped += int(not was_saved)
         conn.commit()
     return saved, skipped

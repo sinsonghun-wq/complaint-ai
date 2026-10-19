@@ -16,14 +16,14 @@ const ownApi = (record = row()) => vi.fn(async (path, options) => {
 });
 
 describe('complaint lookup filters and cached chatbot search', () => {
-  it('requires a department and exactly one status before applying the shared filter', () => {
+  it('allows either a department or one status before applying the shared filter', () => {
     const apply = vi.fn(); const clear = vi.fn();
     render(<ComplaintFilters onApply={apply} onClear={clear} />);
     expect(screen.getAllByRole('checkbox')).toHaveLength(7);
     const button = screen.getByRole('button', { name: '조회하기' });
     expect(button.disabled).toBe(true);
     fireEvent.click(screen.getByRole('checkbox', { name: departmentLabels[1] }));
-    expect(button.disabled).toBe(true);
+    expect(button.disabled).toBe(false);
     fireEvent.click(screen.getByRole('radio', { name: '접수 중' }));
     expect(button.disabled).toBe(false);
     fireEvent.click(screen.getByRole('checkbox', { name: departmentLabels[3] }));

@@ -23,7 +23,7 @@ class ComplaintFilterTests(unittest.TestCase):
                              (identifier, owner, identifier + '@filter.test', 'filter-' + identifier, 'user'))
             records = [
                 ('unassigned', None, '접수', None, False, False),
-                ('blank', '  ', '접수', None, False, False),
+                ('blank', None, '접수', None, False, False),
                 ('assigned', '교통·국토', '접수', None, False, False),
                 ('draft', '교통·국토', '진행중', 'draft', False, False),
                 ('sent', '교통·국토', '완료', 'sent', False, False),
@@ -53,7 +53,9 @@ class ComplaintFilterTests(unittest.TestCase):
         self.client.close()
 
     def query(self, departments, state, **extra):
-        params = [('departments', department) for department in departments] + [('view_status', state)]
+        params = [('departments', department) for department in departments]
+        if state:
+            params.append(('view_status', state))
         params.extend(extra.items())
         return self.client.get('/api/complaints', params=params)
 
@@ -83,9 +85,9 @@ class ComplaintFilterTests(unittest.TestCase):
         self.assertEqual(len(page['complaints']), 1)
         self.assertEqual(page['total'], 2)
 
-    def test_requires_department_and_single_status_and_rejects_noncanonical_departments(self):
+    def test_rejects_invalid_departments_duplicate_status_and_admin_filter_use(self):
         invalid = [
-            [('departments', '교통·국토')], [('view_status', 'completed')],
+            [('departments', '')], [('view_status', '')],
             [('departments', '가짜 부서'), ('view_status', 'completed')],
             [('departments', '교통·국토'), ('view_status', 'bad')],
             [('departments', '교통·국토'), ('view_status', 'completed'), ('view_status', 'in_progress')],
@@ -102,3 +104,39 @@ class ComplaintFilterTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertLessEqual(len(response.json()['complaints']), 2)
         self.assertGreater(response.json()['total'], 2)
+
+
+    def test_department_only_includes_every_active_status_in_that_department(self):
+        for departments, labels in [
+            (['교통·국토'], {'assigned','draft','sent','status-only'}),
+            (['환경·위생'], {'other-department'}),
+            (['교통·국토','환경·위생'], {'assigned','draft','sent','status-only','other-department'}),
+        ]:
+            with self.subTest(departments=departments):
+                response = self.query(departments, '')
+                self.assertEqual(response.status_code, 200, response.text)
+                expected = {self.ids[label] for label in labels}
+                self.assertEqual({row['id'] for row in response.json()['complaints']}, expected)
+                self.assertEqual(response.json()['total'], len(expected))
+                page = self.query(departments, '', limit=1, offset=1).json()
+                self.assertEqual(page['total'], len(expected))
+                self.assertEqual(len(page['complaints']), max(0, min(1, len(expected)-1)))
+
+    def test_status_only_searches_all_departments_and_preserves_ownership(self):
+        cases = {
+            'unassigned': {'unassigned','blank'},
+            'in_progress': {'assigned','draft','status-only'},
+            'completed': {'sent','other-department'},
+        }
+        for state, labels in cases.items():
+            with self.subTest(state=state):
+                response = self.query([], state)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual({row['id'] for row in response.json()['complaints']}, {self.ids[label] for label in labels})
+                self.assertEqual(response.json()['total'], len(labels))
+                self.assertTrue(all(row['latest_response_state'] != 'draft' for row in response.json()['complaints']))
+
+    def test_combined_filters_intersect_instead_of_returning_unrelated_departments(self):
+        response = self.query(['교통·국토'], 'completed')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({row['id'] for row in response.json()['complaints']}, {self.ids['sent']})

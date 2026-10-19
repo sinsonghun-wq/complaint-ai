@@ -3,8 +3,9 @@ import { importPercentage } from "./importProgress.js";
 import departments from "../../app/departments.json";
 import AIRecommendations, { useRecommendations } from "./AIRecommendations.jsx";
 import ComplaintFilters, { appendComplaintFilters, citizenViewStatusLabel } from "./ComplaintFilters.jsx";
+import DeletedData from "./DeletedData.jsx";
 
-const categories = ["노동·기업", "교통·국토", "주택·건축", "환경·위생", "문화·행정·안전", "보건·복지", "기타"]; // app/categories.py 의 NAMES 와 같은 순서
+const categories = departments.map((department) => department.name);
 const statusLabel = (value) => ({ "접수": "접수 대기", "진행중": "접수 됨" }[value] || value);
 const isOpen = (record) => ["접수", "진행중"].includes(record?.complaint_status);
 const key = "complaintai.fastapi.auth";
@@ -27,6 +28,17 @@ export default function App() {
     if (!response.ok) throw new Error(Array.isArray(data.detail) ? data.detail.map((item) => item.msg).join(" / ") : data.detail || data.message || "요청을 처리하지 못했습니다.");
     return data;
   }, [headers, server]);
+  useEffect(() => {
+    if (!auth?.token) return;
+    let stopped = false;
+    api("/api/auth/context").then((data) => {
+      if (!stopped && data.user && JSON.stringify(data.user) !== JSON.stringify(auth.user)) {
+        const refreshed = { token: auth.token, user: data.user };
+        sessionStorage.setItem(key, JSON.stringify(refreshed)); setAuth(refreshed);
+      }
+    }).catch(() => {});
+    return () => { stopped = true; };
+  }, [api, auth?.token]);
   const saveAuth = (data) => { sessionStorage.setItem(key, JSON.stringify(data)); setAuth(data); };
   if (!auth) return <LoginScreen api={api} saveAuth={saveAuth} server={server} setServer={setServer} />;
   return <Workspace auth={auth} api={api} signout={() => { sessionStorage.removeItem(key); setAuth(null); }} server={server} setServer={setServer} />;
@@ -63,6 +75,16 @@ function LoginScreen({ api, saveAuth, server, setServer }) {
 
 function Workspace({ auth, api, signout, server, setServer }) {
   const isAdmin = auth.user.role === "admin";
+  const [departmentCatalog, setDepartmentCatalog] = useState(departments);
+  const ownDepartmentId = auth.user.department_id ?? null;
+  const departmentName = (id) => departmentCatalog.find((department) => department.id === id)?.name || "부서 미지정";
+  useEffect(() => {
+    let stopped = false;
+    api("/api/departments").then((data) => {
+      if (!stopped && Array.isArray(data.departments)) setDepartmentCatalog(data.departments);
+    }).catch(() => {});
+    return () => { stopped = true; };
+  }, [api]);
   const recommendation = useRecommendations(api);
   const [selectingForAI, setSelectingForAI] = useState(false);
   const [view, setView] = useState(isAdmin ? "upload" : "write");
@@ -80,7 +102,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
   const [importProgress, setImportProgress] = useState(null);
   const [counts, setCounts] = useState({});
   const [countsError, setCountsError] = useState("");
-  const [active, setActive] = useState(auth.user.department || "기타");
+  const [active, setActive] = useState(ownDepartmentId || 7);
   const [records, setRecords] = useState([]);
   const [total, setTotal] = useState(0);
   const [pageSize, setPageSize] = useState(10);
@@ -91,6 +113,9 @@ function Workspace({ auth, api, signout, server, setServer }) {
   const [responseText, setResponseText] = useState("");
   const [transferTarget, setTransferTarget] = useState("");
   const [deletingScope, setDeletingScope] = useState(null);
+  useEffect(() => {
+    setActive(ownDepartmentId || 7); setSelected(null); setPage(1);
+  }, [ownDepartmentId]);
   const importTimer = useRef(null);
   const listRequest = useRef(0);
   useEffect(() => () => window.clearInterval(importTimer.current), []);
@@ -98,7 +123,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
   const refresh = useCallback(async () => {
     try {
       const data = await api("/api/complaints/counts");
-      setCounts(Object.fromEntries(data.categories.map((item) => [item.category, item.count])));
+      setCounts(Object.fromEntries(data.categories.map((item) => [item.department_id ?? departments.find((department) => department.name === item.category)?.id, item.count])));
       setCountsError("");
     } catch (error) { setCountsError(error.message); }
   }, [api]);
@@ -107,7 +132,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
     const citizenParams = new URLSearchParams({ deleted: "false", limit: String(pageSize), offset: String((targetPage - 1) * pageSize) });
     if (citizenFilters) appendComplaintFilters(citizenParams, citizenFilters);
     const path = isAdmin
-      ? `/api/complaints?deleted=${view === "deleted"}&category=${encodeURIComponent(view === "deleted" ? "" : active)}&source=${sourceFilter}&limit=${pageSize}&offset=${(targetPage - 1) * pageSize}`
+      ? `/api/complaints?deleted=${view === "deleted"}${view === "deleted" ? "" : `&department_id=${active}`}&source=${sourceFilter}&limit=${pageSize}&offset=${(targetPage - 1) * pageSize}`
       : `/api/complaints?${citizenParams}`;
     // Publish each successful response immediately. A count outage must not
     // hide a valid list or wait for the other request before showing its rows.
@@ -119,7 +144,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
       }),
       api("/api/complaints/counts").then((data) => {
         if (requestId !== listRequest.current) return;
-        setCounts(Object.fromEntries(data.categories.map((item) => [item.category, item.count])));
+        setCounts(Object.fromEntries(data.categories.map((item) => [item.department_id ?? departments.find((department) => department.name === item.category)?.id, item.count])));
         setCountsError("");
       }).catch((error) => {
         if (requestId === listRequest.current) setCountsError(error.message);
@@ -129,10 +154,10 @@ function Workspace({ auth, api, signout, server, setServer }) {
   }, [active, api, isAdmin, page, pageSize, sourceFilter, view, citizenFilters]);
   useEffect(() => { refresh().catch((error) => setMessage(error.message)); }, [refresh]);
   useEffect(() => {
-    if (view === "categories" || view === "deleted" || view === "submitted") load().catch((error) => setMessage(error.message));
+    if (view === "categories" || view === "submitted") load().catch((error) => setMessage(error.message));
   }, [load, view]);
   useEffect(() => {
-    if (view !== "submitted" && view !== "categories" && view !== "deleted") return;
+    if (view !== "submitted" && view !== "categories") return;
     let stopped = false;
     const timer = window.setInterval(() => {
       if (!stopped) load().catch((error) => setMessage(error.message));
@@ -205,33 +230,14 @@ function Workspace({ auth, api, signout, server, setServer }) {
   };
   const removeCategory = async () => {
     if (!active || total === 0) return;
-    if (!window.confirm(`${active} 부서의 전체 민원을 삭제합니다. 출처 필터와 관계없이 적용됩니다. 정말로 전체 삭제하시겠습니까?`)) return;
+    if (!window.confirm(`${departmentName(active)} 부서의 전체 민원을 삭제합니다. 출처 필터와 관계없이 적용됩니다. 정말로 전체 삭제하시겠습니까?`)) return;
     const reason = window.prompt("접수 대기·접수 됨 상태의 민원에 적용할 취소 사유를 입력하세요. 완료·취소 민원은 제외됩니다.");
     if (!reason?.trim()) return;
     setDeletingScope("category");
     try {
-      const result = await api(`/api/complaints/category/${encodeURIComponent(active)}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) });
+      const result = await api(`/api/departments/${active}/complaints`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) });
       setPage(1); await refresh(); await load(1);
-      setMessage(`${active} 부서 민원 ${result.deleted.toLocaleString()}건을 취소했습니다.`);
-    } catch (error) { setMessage(error.message); } finally { setDeletingScope(null); }
-  };
-  const restore = async (id) => {
-    if (deletingScope) return;
-    if (!window.confirm("이 민원을 삭제 보관함에서 복원할까요? 완료 답변이 있으면 완료 상태를 유지하고, 없으면 접수 대기로 복원됩니다.")) return;
-    setDeletingScope("restore");
-    try { await api(`/api/complaints/${id}/restore`, { method: "POST" }); setPage(1); await refresh(); await load(1); setMessage("민원을 복원했습니다."); }
-    catch (error) { setMessage(error.message); } finally { setDeletingScope(null); }
-  };
-  const hardDelete = async (id) => {
-    const all = id === "all";
-    if (deletingScope) return;
-    if (!window.confirm(all ? "모든 부서의 삭제된 데이터를 전부 영구 삭제합니다. 현재 출처 필터와 페이지에 관계없이 적용되며 복구할 수 없습니다. 계속하시겠습니까?" : "이 데이터를 영구 삭제하면 복구할 수 없습니다. 계속하시겠습니까?")) return;
-    const password = window.prompt("로그인 비밀번호를 입력하세요."); if (!password) return;
-    setDeletingScope("permanent");
-    try {
-      const result = await api(all ? "/api/complaints/deleted/all" : `/api/complaints/${id}/permanent`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) });
-      setPage(1); await refresh(); await load(1);
-      setMessage(`${result.permanently_deleted.toLocaleString()}건을 영구 삭제했습니다.`);
+      setMessage(`${departmentName(active)} 부서 민원 ${result.deleted.toLocaleString()}건을 취소했습니다.`);
     } catch (error) { setMessage(error.message); } finally { setDeletingScope(null); }
   };
   const deleteDepartmentAll = async () => {
@@ -349,24 +355,25 @@ function Workspace({ auth, api, signout, server, setServer }) {
       setMessage("답변을 민원인에게 전송했습니다."); await refresh();
     } catch (error) { setMessage(error.message); } finally { setActionBusy(false); }
   };
-  const transfer = async (category) => {
-    if (!isOpen(selected) || actionBusy || !category || category === selected.category) return;
+  const transfer = async (targetId) => {
+    const department_id = Number(targetId);
+    if (!isOpen(selected) || actionBusy || !department_id || department_id === selected.department_id) return;
     setActionBusy(true);
     try {
-      await api(`/api/department/complaints/${selected.id}/transfer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category }) });
-      setSelected(null); setMessage(`${category} 부서로 전달했습니다.`); await refresh(); navigate("categories", true);
+      await api(`/api/department/complaints/${selected.id}/transfer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ department_id }) });
+      setSelected(null); setMessage(`${departmentName(department_id)} 부서로 전달했습니다.`); await refresh(); navigate("categories", true);
     } catch (error) { setMessage(error.message); } finally { setActionBusy(false); }
   };
   const navItems = isAdmin ? [["upload", "새 민원"], ["categories", "분류 목록"], ["deleted", "삭제된 데이터"], ["intake", "민원 접수"]] : [["write", "새 민원"], ["submitted", "작성한 민원"], ["ai-recommendations", "AI 추천 답변"]];
   const pageTitle = { write: "새 민원 작성", submitted: "작성한 민원", "ai-recommendations": "AI 추천 답변", upload: "파일에서 일괄 가져오기", categories: "분류 목록", deleted: "삭제된 데이터", intake: "민원 접수" }[view];
-  const adminCategories = categories;
-  const canManageCategory = isAdmin && active === auth.user.department;
+  const adminCategories = departmentCatalog;
+  const canManageCategory = isAdmin && ownDepartmentId != null && active === ownDepartmentId;
   return <div className="app">
     <aside><div className="brand"><b>C</b><strong>ComplaintAI</strong></div><p className="navlabel">민원 업무</p>
       {navItems.map(([id, label]) => <button key={id} className={view === id ? "active" : ""} onClick={() => navigate(id)}>{label}</button>)}
       <div className="sidebar-bottom">
         {isAdmin && importProgress && <ImportProgress progress={importProgress} />}
-        <div className="account"><p className="navlabel">계정</p><small>{auth.user.name} · {isAdmin ? `${auth.user.department} 관리자` : "민원인"}</small><button onClick={signout}>로그아웃</button><em>개인정보는 요약 결과에 노출되지 않도록 제외해 처리합니다.</em></div>
+        <div className="account"><p className="navlabel">계정</p><small>{auth.user.name} · {isAdmin ? `${auth.user.department_name || departmentName(ownDepartmentId)} 관리자` : "민원인"}</small><button onClick={signout}>로그아웃</button><em>개인정보는 요약 결과에 노출되지 않도록 제외해 처리합니다.</em></div>
       </div>
     </aside>
     <main><header><div><span>{isAdmin ? "부서 민원 관리" : "민원인 업무"}</span><h1>{pageTitle}</h1></div><label>처리 서버 주소<input value={server} onChange={(e) => { setServer(e.target.value); localStorage.setItem("complaintai.fastapi.server", e.target.value); }} /></label></header>
@@ -393,12 +400,13 @@ function Workspace({ auth, api, signout, server, setServer }) {
       </section>}
       {view === "ai-recommendations" && !isAdmin && <AIRecommendations recommendation={recommendation} onToolsChanged={refresh} />}
       {view === "submitted" && <>{!isAdmin && <section className="panel citizen-list-filter"><details><summary>특정 민원 조회</summary><ComplaintFilters initialValue={citizenFilters} onApply={(filters) => { listRequest.current++; setRecords([]); setTotal(0); setCitizenFilters(filters); setPage(1); }} onClear={() => { listRequest.current++; setRecords([]); setTotal(0); setCitizenFilters(null); setPage(1); }} /></details>{citizenFilters && <p role="status">조회 조건이 적용되어 있습니다. 전체 목록은 ‘조건 초기화’로 확인할 수 있습니다.</p>}</section>}{selectingForAI && <div className="ai-selection-banner" role="status"><div><strong>AI 추천 답변을 확인할 민원을 선택하세요.</strong><p>선택하면 AI 추천 답변 화면으로 돌아가 자동으로 답변을 생성합니다.</p></div><button onClick={() => navigate("ai-recommendations")}>선택 취소</button></div>}<ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} empty="작성한 민원이 없습니다." user selectingForAI={selectingForAI} onSelectForAI={selectForAI} onEdit={edit} onDelete={remove} onFollowUp={writeFollowUp} /></>}
-      {(view === "categories" || view === "deleted") && <><section className="category"><div className="category-head"><h2>{view === "deleted" ? "삭제된 데이터" : "분류 카테고리"}</h2></div>{countsError && <p className="muted" role="status">카테고리 건수를 불러오지 못했습니다. 민원 목록은 계속 사용할 수 있습니다. ({countsError})</p>}{view === "categories" && <div className="grid">{adminCategories.map((category) => <button key={category} className={`${active === category ? "selected" : ""} ${isAdmin && category === auth.user.department ? "department-owned" : ""}`} onClick={() => { setActive(category); setPage(1); }}><b>{counts[category] || 0}</b>{category}</button>)}</div>}</section><ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} sourceFilter={sourceFilter} setSourceFilter={setSourceFilter} deleted={view === "deleted"} canManageCategory={canManageCategory} canRunGlobalPurge={isAdmin} deletingScope={deletingScope} empty="표시할 민원이 없습니다." onSelect={chooseForIntake} onDelete={remove} onDeleteAll={removeCategory} onDepartmentPurge={deleteDepartmentAll} onRestore={restore} onHardDelete={hardDelete} /></>}
+      {view === "deleted" && isAdmin && <DeletedData api={api} ownDepartmentId={ownDepartmentId} onChanged={refresh} />}
+      {view === "categories" && <><section className="category"><div className="category-head"><h2>분류 카테고리</h2></div>{countsError && <p className="muted" role="status">카테고리 건수를 불러오지 못했습니다. 민원 목록은 계속 사용할 수 있습니다. ({countsError})</p>}<div className="grid">{adminCategories.map((department) => <button key={department.id} className={`${active === department.id ? "selected" : ""} ${isAdmin && department.id === ownDepartmentId ? "department-owned" : ""}`} onClick={() => { setActive(department.id); setPage(1); }}><b>{counts[department.id] || 0}</b>{department.name}</button>)}</div></section><ComplaintList records={records} total={total} page={page} pageSize={pageSize} setPage={setPage} setPageSize={setPageSize} sourceFilter={sourceFilter} setSourceFilter={setSourceFilter} deleted={false} canManageCategory={canManageCategory} canRunGlobalPurge={false} deletingScope={deletingScope} empty="표시할 민원이 없습니다." onSelect={chooseForIntake} onDelete={remove} onDeleteAll={removeCategory} onDepartmentPurge={deleteDepartmentAll} /></>}
       {view === "intake" && <section className="department-workspace">
         <article className="panel intake">
           {!selected ? <><h2>민원 접수</h2><p className="muted">민원 접수는 분류 목록에서 선택한 민원만 처리할 수 있습니다.</p><button className="primary" onClick={() => navigate("categories")}>분류 목록 이동</button></> : selected.complaint_status === "취소" || selected.deleted_at || !selected.can_manage ? <article className="completion" role="alert"><h3>{selected.complaint_status === "취소" ? "해당 민원은 삭제(취소)되었습니다." : "해당 민원을 더 이상 처리할 수 없습니다."}</h3><p>{selected.cancelled_by_role === "user" ? "민원인이 해당 민원을 취소했습니다." : selected.cancellation_reason || "담당 부서가 변경되었거나 민원이 삭제되었습니다."}</p><button onClick={() => { setSelected(null); setResponseText(""); navigate("categories"); }}>분류 목록으로 이동</button></article> : <>
             <h2>{selected.title}</h2>
-            <p className="muted">{selected.category} · {selected.submitted_by_user ? "일반 사용자 민원" : "파일 민원"}</p>
+            <p className="muted">{selected.department_name || departmentName(selected.department_id)} · {selected.submitted_by_user ? "일반 사용자 민원" : "파일 민원"}</p>
             <h3>원본 민원</h3><p className="original">{selected.content}</p>
             <PreviousContext context={selected.previous_context} />
             <h3>요약</h3><p>{selected.summary}</p>
@@ -411,7 +419,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
           <h2>다른 부서로 전달</h2>
           <p className="muted">전달하면 민원은 선택한 부서의 분류 목록으로 이동하고 상태는 접수 대기로 변경됩니다.</p>
           <div className="transfer-controls">
-            <label>전달할 부서<select value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)}><option value="">부서를 선택하세요</option>{categories.filter((category) => category !== selected.category).map((category) => <option key={category}>{category}</option>)}</select></label>
+            <label>전달할 부서<select value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)}><option value="">부서를 선택하세요</option>{departmentCatalog.filter((department) => department.id !== selected.department_id).map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label>
             <button className="primary" disabled={!transferTarget || actionBusy} onClick={() => transfer(transferTarget)}>부서 전달</button>
           </div>
         </article>}
@@ -460,7 +468,7 @@ function ComplaintList({ records, total, page, pageSize, setPage, setPageSize, s
     <div className="list">{records.map((record) => {
       const cancelled = record.complaint_status === "취소";
       return <article key={record.id} className={!record.submitted_by_user ? "file-complaint" : "user-complaint"}><div className="record-row"><div>
-        <h3>{record.title}</h3><small><span className="source-badge">{record.submitted_by_user ? "민원인 작성" : "파일 업로드"}</span> {record.category || "부서 판별중..."} · 상태: <b>{user ? citizenViewStatusLabel(record) : statusLabel(record.complaint_status)}</b> · {new Date(record.created_at).toLocaleDateString()}</small>
+        <h3>{record.title}</h3><small><span className="source-badge">{record.submitted_by_user ? "민원인 작성" : "파일 업로드"}</span> {record.department_name || departments.find((department) => department.id === record.department_id)?.name || record.category || "부서 판별중..."} · 상태: <b>{user ? citizenViewStatusLabel(record) : statusLabel(record.complaint_status)}</b> · {new Date(record.created_at).toLocaleDateString()}</small>
         {cancelled ? <div className="answer cancellation" role="status"><b>{record.cancelled_by_role === "user" ? "민원인이 해당 민원을 취소했습니다." : "민원이 취소되었습니다."}</b>{record.cancelled_by_role === "admin" && <p>취소 사유: {record.cancellation_reason || "사유가 기록되지 않았습니다."}</p>}</div> : <>
           {user ? <p className="original">{record.content}</p> : <><p>{record.summary}</p><details><summary>원본 민원 확인</summary><p className="original">{record.content}</p></details></>}
           <PreviousContext context={record.previous_context} />
