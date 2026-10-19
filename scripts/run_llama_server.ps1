@@ -25,7 +25,7 @@ param(
     # 슬롯(동시 요청) 수와 슬롯당 컨텍스트. 전체 컨텍스트 = 슬롯 수 x 슬롯당 컨텍스트
     # 챗봇(API 서버)과 CSV 가져오기(워커)가 동시에 요청할 수 있어 2 슬롯으로 둡니다.
     [int]$Parallel = 2,
-    [int]$CtxPerSlot = 8192,
+    [int]$CtxPerSlot = 32768,
     # GPU 에 올릴 레이어 수 (99 = 전부). VRAM 이 모자라면 낮추세요.
     [int]$GpuLayers = 99
 )
