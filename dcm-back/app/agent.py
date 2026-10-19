@@ -78,7 +78,7 @@ selectComplaintT = tool(selectComplaintT)
 request_queue = asyncio.Queue()
 worker_task = None
 
-# 모드와 상관없이 유저별 대화 기록을 공유하기 위한 전역 MemorySaver
+# 요청마다 새로 만들면 이전 대화가 사라지므로 전역으로 한 번만 만듭니다. (thread_id=user_id 로 유저별 기록 구분)
 global_memory = MemorySaver()
 
 async def llm_worker(llm, tools_dict):
@@ -100,15 +100,10 @@ async def llm_worker(llm, tools_dict):
             else:
                 active_tools = []
 
+            # 동적 툴이 바인딩된 에이전트 생성 (매 요청마다 모드별 최적화)
             current_system_prompt = prompts.agent_system_prompt(agent_mode)
 
-            # 동일한 글로벌 메모리 사용
-            agent_executor = create_agent(
-                llm, 
-                active_tools, 
-                checkpointer=global_memory, 
-                system_prompt=current_system_prompt
-            )
+            agent_executor = create_agent(llm, active_tools, checkpointer=global_memory, system_prompt=current_system_prompt)
 
             # 모드와 상관없이 유저별로 대화 기록을 공유하기 위해 thread_id를 user_id로 고정
             config = {
