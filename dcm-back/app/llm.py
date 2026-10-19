@@ -75,6 +75,7 @@ def llama_server_extra(task: str) -> dict[str, Any]:
     return {
         "lora": [{"id": LLAMA_SERVER_LORA_ID, "scale": 1.0 if uses_adapter(task) else 0.0}],
         "chat_template_kwargs": CHAT_TEMPLATE_KWARGS,
+        "n_ctx": 32768,
     }
 
 
