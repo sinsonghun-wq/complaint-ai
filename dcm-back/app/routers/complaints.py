@@ -23,6 +23,7 @@ from ..ai import ACTIVE_EMBEDDING_MODEL, CATEGORIES, analyze, embeddingForSelect
 from ..services.complaint import classify_submission, save_records
 from ..config import MAX_BATCH_SIZE, STATIC_DIR, STATUSES
 from ..logger import logger
+from ..utils.util import requestFilter
 
 router = APIRouter(prefix="/api", tags=["complaints"])
 
@@ -561,6 +562,12 @@ def react_app(path: str, request: Request):
 @router.post("/chat", response_model=ChatResponseBody)
 async def chatAI(chatBody: ChatRequestBody, actor: Annotated[dict, Depends(actor_from_auth)]):
     user_id = actor["owner_id"]
+    
+    # 내용 필터링
+    chatBody.content = requestFilter(chatBody.content)
+    #필터링된 내용 테스트
+    logger.info(chatBody.content)
+    
     # 큐에 요청을 넣고 워커가 처리 완료하여 Future에 결과를 담을 때까지 비동기 대기
     result = await enqueue_chat_request(user_id, chatBody)
     return result

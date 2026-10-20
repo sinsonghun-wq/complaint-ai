@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 from typing import Any
 import uuid
 
@@ -65,3 +66,21 @@ def require_open_complaint(row: dict) -> None:
 def require_admin(actor: dict[str, Any]) -> None:
     if actor["role"] != "admin":
         raise HTTPException(403, "부서 관리자 전용 기능입니다.")
+
+def requestFilter(content: str) -> str:
+    # 공통 치환 함수: 매칭된 문자열 내의 숫자와 영문자만 '▲'로 변경
+    def mask_match(match):
+        return re.sub(r'[0-9a-zA-Z]', '▲', match.group(0))
+    
+    # 1. 주민등록번호 필터링 (하이픈 유무 모두 대응)
+    # 예: 123456-1234567 또는 1234561234567
+    content = re.sub(r'\d{6}-?[1-8]\d{6}', mask_match, content)
+    
+    # 2. 전화번호 필터링 (하이픈이 있거나 없는 경우 모두 대응)
+    # 예: 010-1234-5678, 01012345678, 02-123-4567, 021234567 등
+    content = re.sub(r'\d{2,3}-?\d{3,4}-?\d{4}', mask_match, content)
+    
+    # 3. 이메일 주소 필터링
+    content = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', mask_match, content)
+    
+    return content
