@@ -14,7 +14,7 @@ import os
 
 from . import categories as category_defs
 
-PROMPT_VERSION = "complaintai-ko-v9"   # v9: 분석 urgency 기준 재정의(판단 순서 칭찬·감사 low → 원문에 위험 언급 high → 겪는 문제 없음 low → 나머지 medium) / v8: v7 도구 선택 규칙 + 화면 배치 변경(양식·목록이 오른쪽) + 접수 도구 설명 보강 + 문의 모드(aiFAQ) 예시 변경 / v7: 챗봇 도구 선택을 의도 기준으로 다시 씀(기존 민원 다루기 / 알리거나 조치를 바라는 일 - 칭찬·제안 포함 / 의사만 / 일반 정보 문의 / 무관) / v3: 프롬프트 분리·confidence/reason 제거·안내 문구 고정 / v4: 짧은 원문의 summary·keywords 개수 규칙 / v5: keywords 는 제목이 아닌 원문에서(띄어쓰기 그대로) / v6: selectComplaintT 의 is_described 인자 제거(content 가 비었는지로 판단)
+PROMPT_VERSION = "complaintai-ko-v9"   # v9: 분석 urgency 기준 재정의(판단 순서 칭찬·감사 low → 원문에 위험 언급 high → 겪는 문제 없음 low → 나머지 medium) / v8: v7 도구 선택 규칙 + 화면 배치 변경(양식·목록이 오른쪽) + 접수 도구 설명 보강 + 문의 모드(aiFAQ) 예시 변경 / v7: 챗봇 도구 선택을 의도 기준으로 다시 씀(기존 민원 다루기 / 알리거나 조치를 바라는 일 - 칭찬·제안 포함 / 의사만 / 일반 정보 문의 / 무관) / v3: 프롬프트 분리·confidence/reason 제거·안내 문구 고정 / v4: 짧은 원문의 summary·keywords 개수 규칙 / v5: keywords 는 제목이 아닌 원문에서(띄어쓰기 그대로) / v6: selectComplaintT 테의 is_described 인자 제거(content 가 비었는지로 판단)
 
 
 # =============================================================================
@@ -25,13 +25,13 @@ AGENT_MODE_INQUIRY = 1   # 문의 (학습하지 않음)
 
 # 도구 호출 뒤(또는 도구 없이) 민원인에게 보내는 고정 문구. label_guide.md 의 A10~A16 과 같습니다.
 REPLY_TEXTS: dict[str, str] = {
-    "insert_filled": "말씀하신 내용으로 접수 양식을 채워 두었어요. 오른쪽 양식을 확인하시고 '접수' 버튼을 눌러 주세요. 고칠 부분이 있으면 직접 수정한 뒤 접수하시면 됩니다.",
-    "insert_empty": "오른쪽에 접수 양식을 열어 두었어요. 불편하신 내용을 적고 '접수' 버튼을 눌러 주세요.",
-    "select_found": "말씀하신 내용과 비슷한 민원을 오른쪽에 보여 드렸어요. 접수 대기·진행 중인 민원은 수정하거나 삭제할 수 있고, 처리가 끝났거나 취소된 민원은 조회만 할 수 있어요.",
-    "select_none": "말씀하신 내용과 비슷한 민원을 찾지 못했어요. 민원 내용을 조금 더 자세히 알려 주시겠어요?",
+    "insert_filled": "말씀하신 내용으로 접수 양식을 채워 두었어요. 오른쪽 양식을 확인해 주세요.",
+    "insert_empty": "오른쪽에 접수 양식을 열어 두었어요.",
+    "select_found": "말씀하신 내용과 비슷한 민원을 오른쪽에 보여 드렸어요.",
+    "select_none": "말씀하신 내용과 비슷한 민원을 찾지 못했어요.",
     "select_undescribed": "어떤 민원인지 내용을 알려 주세요. (예: '집 앞 가로등 고장 민원')",
     "reject": "죄송하지만 민원 접수·조회와 관련된 내용만 도와드릴 수 있어요.",
-    "inquiry_redirect": "궁금하신 점은 '문의' 모드에서 물어봐 주세요.",
+    "inquiry_redirect": "관련 내용을 확인해 주세요.",
 }
 
 _RULES = """[규칙]
@@ -59,16 +59,18 @@ AGENT_SYSTEM_PROMPTS: dict[int, str] = {
 
 {_RULES}""",
     AGENT_MODE_INQUIRY: f"""너는 한국인 민원인들의 민원 처리를 돕는 한국어를 사용하는 AI 도우미야.
-지금은 '문의' 모드야. 사용자의 질문에 자연스럽고 친절하게 답해.
+지금은 '문의' 모드야. 사용자의 질문에 친절하고 부드러운 어조로 명확하게 답해.
 
 [규칙]
 1. 사용자의 질문이 들어오면 무조건 `aiFAQ` 도구를 호출해. (도구 호출 없이 직접 답변하는 것은 금지.)
 2. `aiFAQ`의 파라미터인 `content`에는 사용자의 질문 원문을 넣고, `is_described`는 description을 참고해서 설정해.
 3. 아래 경우에는 도구를 호출하지 말고, 지금까지의 대화 내용을 보고 바로 답해.
-   - 사용자가 이전에 한 말이나 질문을 다시 묻는 경우 (예: "내가 처음에 뭐라고 했지?")
-   - 인사, 감사, "접수했어" 같은 단순한 알림이나 맞장구
-4. 도구 실행 결과(`result`)에 관련 답변 데이터가 있으면 그 내용을 바탕으로 답해. 없으면 공식 자료에는 없다고 밝힌 뒤 일반적인 범위에서 짧게 안내하고, 필요하면 민원 접수를 제안해.
-5. 민원과 전혀 무관한 질문일 때만 민원 관련 답변만 제공할 수 있음을 안내해.
+   - 사용자가 이전에 한 말이나 질문을 다시 묻는 경우
+   - 인사, 감사, 단순한 알림이나 맞장구
+4. 도구 실행 결과(`result`)에 데이터가 있을 때:
+   - 사용자가 원문에 **"사례"를 원하거나, "알려줘", "조사해줘", "알아봐줘"**와 같이 명시적으로 요구한 경우에만 친절하게 사례나 관련 내용을 풀어서 안내해.
+   - 그러한 명시적 요구가 없는 일반적인 제보나 상황 설명(예: 위험 상황, 불편 신고 등)인 경우, "사례를 조사했다", "알아보고 있다" 같은 불필요한 메타 표현은 절대 쓰지 말고, 해당 상황에 맞춰 자연스럽고 친절하게 대답해.
+5. 결과 데이터가 없거나 답변에 필요한 정보가 부족할 경우, 부자연스러운 위로("안심하셔도 됩니다" 등)나 억지 민원 접수 권유를 붙이지 말고 자연스럽게 안내해.
 
 {_RULES}""",
 }
@@ -86,42 +88,16 @@ content: 민원인의 불편 사항을 나타내며 무엇이 어떤 상태인�
 content: 찾을 민원의 대상을 나타내는 명사만 민원인이 한 말 그대로 넣습니다. 번호·동·호·층, 장소를 꾸미는 말, 상태·요청을 나타내는 말(고장, 파손, 취소 등)은 뺍니다. (예: "101동 엘리베이터 고장 민원 취소해 줘" -> "엘리베이터") 대상을 알 수 없으면 빈 문자열("")입니다.""",
        
         #구분용 주석 ----
-    "aiFAQ": """민원의 처리를 요청하는 경우가 아닌, 민원과 관련된 문의를 하는 경우라면 LLM 모델이 직접 답변합니다.
+    "aiFAQ": """민원 처리를 요청하는 경우가 아닌, 민원과 관련된 문의를 하는 경우라면 LLM 모델이 직접 답변합니다.
 content: 민원인이 한 질문을 의미합니다.
 is_described: 민원인의 질문이 민원으로 보여지거나, 아니더라도 정보A를 참조할 필요성이 있다고 판단되면 True입니다.
-정보A = [자주 묻는 민원 사례 DB, 법률 내용 DB]
-예를 들어 민원인이 "도로에 고라니가 쓰러져 있어요" 라는 질문을 했다면 그 내용은
-자주 묻는 민원 사례 DB에 저장되어 있을 수도 있고,
-법률 내용 DB에 환경부서에서 로드킬 상황에서 어떻게 처리해야 하는지 나와 있을 수도 있습니다.
-따라서 그런 경우에는 is_described가 True입니다.
-민원인이 "건설 현장에서의 안전 수칙을 알려주세요" 라는 질문을 했다면 그 내용은
-법률 내용 DB에 건설 현장에서의 안전 수칙과 관련된 내용이 포함되어 있을 수 있습니다.
-따라서 그런 경우에는 is_described가  True입니다.
-반면, 민원인이 "민들레 꽃이 참 예쁘다. 얼마일까?" 라는 질문을 했다면 그 내용은
-민원과 관련성이 거의 없으므로 민원 사례 DB는 필요가 없고, 법적인 문제와도 관련성이 거의 없으므로 법률 내용 DB도 필요가 없습니다.
-따라서 그런 경우에는 is_described가  False입니다.
-
-is_described가 True일 경우 DB에서 관련된 데이터셋 여러건을 찾고, json내부의 result에 담겨 반환됩니다.
-데이터셋은 크게 2가지입니다.
-1. 실제 민원 사례: 민원의 제목, 내용, 적절한 답변 내용으로 구성되어 있습니다.
-2. 법률 데이터: 법률의 제목과 법률의 내용으로 구성되어있습니다.
+정보A = [자주 묻는 민원 내용 DB, 법률 내용 DB]
 
 도구는 반드시 1회만 호출합니다.
-만약, result에 저장된 데이터셋에 답변에 필요한 정보가 없을 경우 도구를 다시 호출하지 말고 
-DB에 관련 내용이 없는 것이라고 생각하고 민원을 접수하는 것을 권장하도록 합니다. (도구를 여러번 호출해도 동일한 데이터셋을 가져옵니다.)
-
-민원과 조금이라도 관련있는 경우에는 민원인에게 적절한 답변을 제공합니다.
-문제 상황을 이야기 하는 경우 그 내용은 민원으로 생각합니다.
-특정 상황에서 어떻게 해야하는지를 묻는 내용은 민원으로 생각합니다.
-과거 대화 내용을 묻는 경우도 민원으로 생각합니다.
-
-예시 질문: 내가 이전에 강원도에서 산불이 났다고 했었는데 언제 불이 났다고 했었는지 기억하니? -> 과거 대화 내용이므로 민원으로 생각합니다.
-
-예시 질문: PEM옹벽은 탄산화 시험(정밀)염화물 시료채취 후 시험(성능)실시가 기본과업인지 궁금해서 문의드립니다.
--> 특정 상황에서 어떻게 해야하는지를 묻는 내용이므로 민원입니다. result에 해당 내용이 존재할 경우 대답하면되고, result에 없는 내용이라면 민원을 접수하는 것을 권장하도록 합니다.
-
-민원과 관련이 아얘 없는 경우 민원과 관련된 답변만 제공한다고 안내합니다.
-예시 질문: 맛집을 추천해줘. -> 민원도 아니고 문제 상황도 아니므로 민원과 관련된 답변만 제공함을 안내해드립니다.
+[답변 출력 규칙]
+- 사용자가 명시적으로 "사례", "알려줘", "조사해줘", "알아봐줘" 등을 요구한 경우에만 친절하게 사례나 조사 관련 내용을 포함합니다.
+- 단순 상황 제보나 문의인 경우 "사례를 조사했다", "알아보고 있다" 같은 표현을 절대 사용하지 말고, 친절하고 자연스럽게 대답합니다.
+- 불필요한 위로 멘트나 부자연스러운 접수 권유를 포함하지 않습니다.
 """,
 }
 
@@ -145,8 +121,6 @@ ANALYSIS_FIELDS: tuple[str, ...] = (
 URGENCY_VALUES: tuple[str, ...] = ("low", "medium", "high")
 
 # Ollama 구조화 출력용 JSON 스키마 (요청의 format 에 넣음).
-# 모델이 이 스키마를 벗어난 글자를 생성할 수 없게 막습니다 - category 는 7종 중 하나, 8개 필드 모두 필수.
-# 속성 순서가 곧 생성 순서이므로 ANALYSIS_FIELDS 와 같은 순서로 둡니다.
 ANALYSIS_JSON_SCHEMA: dict = {
     "type": "object",
     "properties": {
@@ -163,17 +137,10 @@ ANALYSIS_JSON_SCHEMA: dict = {
     "additionalProperties": False,
 }
 
-# 분석 프롬프트 길이 - "long"(기존, 카테고리 정의·작성 규칙 전체 약 3,000자) / "short"(카테고리 이름·출력 형식만 약 300자)
-# short 는 규칙을 프롬프트로 설명하지 않고 학습 데이터로 익히게 하는 방식입니다. (학습 시간·실행 시간이 크게 줄어듦)
-#   - 앱: dcm-back/.env 의 ANALYSIS_PROMPT_STYLE
-#   - 학습: 노트북 4번 셀의 ANALYSIS_PROMPT_STYLE (같은 환경변수를 설정)
-# 학습한 길이와 실행 길이가 반드시 같아야 합니다. short 로 학습한 어댑터를 long 프롬프트로 쓰거나 그 반대면 성능이 떨어집니다.
-# short 는 어댑터 없이(베이스 모델만)는 규칙을 모르므로, 어댑터를 켠 분석에만 쓰세요.
 ANALYSIS_PROMPT_STYLES: tuple[str, ...] = ("long", "short")
 
 
 def analysis_prompt_style() -> str:
-    """현재 분석 프롬프트 길이. 호출할 때마다 환경변수를 읽습니다. (.env 를 읽는 순서·노트북 설정 순서와 무관하게 동작)"""
     style = os.getenv("ANALYSIS_PROMPT_STYLE", "long").strip().lower() or "long"
     if style not in ANALYSIS_PROMPT_STYLES:
         raise ValueError(f"ANALYSIS_PROMPT_STYLE 은 {ANALYSIS_PROMPT_STYLES} 중 하나여야 합니다: {style!r}")
@@ -181,13 +148,9 @@ def analysis_prompt_style() -> str:
 
 
 def prompt_version() -> str:
-    """DB(prompt_version)·학습 기록·평가 캐시 이름에 쓰는 프롬프트 버전. 분석 프롬프트 길이까지 구분합니다.
-    예: complaintai-ko-v9 (long) / complaintai-ko-v9-short"""
     return PROMPT_VERSION if analysis_prompt_style() == "long" else f"{PROMPT_VERSION}-{analysis_prompt_style()}"
 
 
-# 분석 프롬프트에 넣는 민원 원문 최대 글자 수. 넘으면 앞부분만 넣고 생략 표시를 붙입니다.
-# (긴 문서에서 컨텍스트를 넘겨 지시문이 잘리는 것을 막기 위함. 학습 데이터도 같은 규칙으로 자릅니다)
 ANALYSIS_CONTENT_MAX_CHARS = 1500
 ANALYSIS_TRUNCATED_MARK = "\n…(이하 생략)"
 
@@ -198,22 +161,18 @@ _ANALYSIS_SCHEMA = (
 
 
 def analysis_content(content: str) -> str:
-    """분석 프롬프트에 넣을 원문. ANALYSIS_CONTENT_MAX_CHARS 를 넘으면 앞부분만 남기고 생략 표시를 붙입니다."""
     if len(content) <= ANALYSIS_CONTENT_MAX_CHARS:
         return content
     return content[:ANALYSIS_CONTENT_MAX_CHARS] + ANALYSIS_TRUNCATED_MARK
 
 
 def analysis_prompt(title: str, content: str) -> str:
-    """민원 분석 프롬프트. title·content 는 호출하는 쪽에서 공백 정리·개인정보 가림을 마친 값이어야 합니다.
-    원문이 길면 analysis_content() 규칙으로 잘라서 넣습니다. 길이는 ANALYSIS_PROMPT_STYLE 로 고릅니다."""
     if analysis_prompt_style() == "short":
         return analysis_prompt_short(title, content)
     return analysis_prompt_long(title, content)
 
 
 def analysis_prompt_short(title: str, content: str) -> str:
-    """짧은 분석 프롬프트 (약 300자). 카테고리 판단 기준·작성 규칙은 학습 데이터로 익힙니다."""
     names = ", ".join(category_defs.NAMES)
     return (
         "민원을 분석해 JSON만 반환한다. 원문에 없는 사실은 만들지 않는다.\n"
@@ -224,7 +183,6 @@ def analysis_prompt_short(title: str, content: str) -> str:
 
 
 def analysis_prompt_long(title: str, content: str) -> str:
-    """긴 분석 프롬프트 (약 3,000자) - 카테고리 정의·작성 규칙을 모두 설명합니다. 어댑터 없이도 동작합니다."""
     names = ", ".join(category_defs.NAMES)
     return (
         "당신은 대한민국 민원 데이터를 정확하고 중립적으로 처리하는 AI다. "
