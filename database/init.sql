@@ -4,6 +4,7 @@ SET LOCAL search_path TO public, pg_catalog;
 SET LOCAL lock_timeout = '10s';
 
 -- 의존하는 테이블부터 삭제한다.
+DROP TABLE IF EXISTS public.ai_recommendations;
 DROP TABLE IF EXISTS public.complaint_responses;
 DROP TABLE IF EXISTS public.import_failures;
 DROP TABLE IF EXISTS public.csv_schema_mappings;
@@ -189,12 +190,12 @@ CREATE INDEX department_documents_embedding_hnsw_idx ON department_documents USI
 
 -- 3. 부서 초기 데이터 삽입
 INSERT INTO departments (name) VALUES
-    ('행정·안전'),
-    ('국토·교통'),
-    ('주택건축'),
+    ('문화·행정·안전'),
+    ('교통·국토'),
+    ('주택·건축'),
     ('환경·위생'),
-    ('보건복지'),
-    ('소방'),
+    ('보건·복지'),
+    ('노동·기업'),
     ('기타')
 ON CONFLICT (name) DO NOTHING;
 
