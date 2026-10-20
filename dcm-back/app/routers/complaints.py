@@ -23,7 +23,7 @@ from ..ai import ACTIVE_EMBEDDING_MODEL, CATEGORIES, analyze, embeddingForSelect
 from ..services.complaint import classify_submission, save_records
 from ..config import MAX_BATCH_SIZE, STATIC_DIR, STATUSES
 from ..logger import logger
-from ..utils.util import requestFilter
+from ..utils.util import requestFilter, return_category
 
 router = APIRouter(prefix="/api", tags=["complaints"])
 
@@ -123,6 +123,7 @@ def complaint_detail(complaint_id: int, actor: Annotated[dict, Depends(actor_fro
     # 목록과 같은 접근 범위; 관리자는 다른 부서 원문을 읽을 수 있다.
     clause, args = ("", []) if actor["role"] == "admin" else (" AND owner_user_id=%s", [actor["owner_id"]])
     response_filter = "" if actor["role"] == "admin" else " AND r.response_state='sent'"
+
     row = fetch_one(f"""SELECT id,title,content,summary,category,analysis_state,complaint_status,created_at,deleted_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
         (NULLIF(BTRIM(source_file), '') IS NULL) submitted_by_user,
         COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1),'') latest_response,
@@ -130,7 +131,7 @@ def complaint_detail(complaint_id: int, actor: Annotated[dict, Depends(actor_fro
         FROM complaints WHERE id=%s{clause}""", (complaint_id, *args))
     if not row:
         raise HTTPException(404, "민원을 찾을 수 없습니다.")
-    row["can_manage"] = actor["role"] == "admin" and row["category"] in allowed(actor)
+    row["can_manage"] = actor["role"] == "admin" and row["category"] in [return_category(*allowed(actor))]
     if actor["role"] == "admin" or row.get("cancelled_by_role") == "user":
         hide_cancelled_content(row)
     return {"complaint": row}

@@ -8,7 +8,7 @@ def owner_id(actor: dict[str, Any]) -> str | None:
     return None if actor["role"] == "admin" else actor["owner_id"]
 
 def allowed(actor: dict[str, Any]) -> list[str]:
-    return actor.get("department_id") if actor["role"] == "admin" else []
+    return [str(actor.get("department_id"))] if actor["role"] == "admin" else []
 
 def require_department(actor: dict[str, Any]) -> list[str]:
     categories = allowed(actor)

@@ -7,25 +7,7 @@ from fastapi import HTTPException, UploadFile
 
 from app.dependencies import allowed
 from app.settings import FILE_STORAGE_DIR
-
-def require_open_complaint(row: dict) -> None:
-    if row["complaint_status"] not in {"접수", "진행중"}:
-        raise HTTPException(409, "해당 민원은 삭제(취소)되었습니다." if row["complaint_status"] == "취소" else "답변이 완료된 민원은 변경할 수 없습니다.")
-
-def hide_cancelled_content(row: dict) -> dict:
-    if row.get("complaint_status") == "취소":
-        row.update(title="취소된 민원", content="", summary="", latest_response="", latest_response_state="", previous_context=None)
-    return row
-
-def locked_complaint(cur, complaint_id: int, actor: dict) -> dict:
-    clause, args = scoped_where(actor)
-    cur.execute(f"SELECT * FROM complaints WHERE id=%s{clause} FOR UPDATE", (complaint_id, *args))
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(404, "민원을 찾을 수 없거나 해당 민원에 접근할 수 없습니다.")
-    if row['deleted_at']:
-        raise HTTPException(409, '해당 민원은 삭제(취소)되었습니다.')
-    return row
+from ..logger import logger
 
 def scoped_where(actor: dict, parameter: int = 2) -> tuple[str, list[Any]]:
     if actor["role"] == "admin": return " AND category=ANY(%s)", [allowed(actor)]
@@ -50,8 +32,9 @@ async def save_upload(upload: UploadFile, maximum: int) -> tuple[Path, str]:
 
 def locked_complaint(cur, complaint_id: int, actor: dict) -> dict:
     clause, args = scoped_where(actor)
-    cur.execute(f"SELECT * FROM complaints WHERE id=%s{clause} FOR UPDATE", (complaint_id, *args))
+    cur.execute(f"SELECT * FROM complaints WHERE id=%s{clause} FOR UPDATE", (complaint_id, [return_category(*args[0])]))
     row = cur.fetchone()
+
     if not row:
         raise HTTPException(404, "민원을 찾을 수 없거나 해당 민원에 접근할 수 없습니다.")
     if row['deleted_at']:
@@ -84,3 +67,21 @@ def requestFilter(content: str) -> str:
     content = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', mask_match, content)
     
     return content
+
+def return_category(num):
+    if type(num) is str:
+         num = int(num)
+    if num==1:
+        return "문화·행정·안전"
+    elif num ==2:
+        return "교통·국토"
+    elif num ==3:
+            return "주택·건축"
+    elif num ==4:
+            return "환경·위생"
+    elif num ==5:
+            return "보건·복지"
+    elif num ==6:
+            return "노동·기업"
+    else:
+         return "기타"
