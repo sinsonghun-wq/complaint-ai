@@ -4,6 +4,7 @@ SET LOCAL search_path TO public, pg_catalog;
 SET LOCAL lock_timeout = '10s';
 
 -- 의존하는 테이블부터 삭제한다.
+DROP TABLE IF EXISTS public.ai_recommendations;
 DROP TABLE IF EXISTS public.complaint_responses;
 DROP TABLE IF EXISTS public.import_failures;
 DROP TABLE IF EXISTS public.csv_schema_mappings;
