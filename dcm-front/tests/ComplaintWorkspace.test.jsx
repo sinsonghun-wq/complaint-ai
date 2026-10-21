@@ -5,24 +5,26 @@ import App from '../src/App.jsx';
 afterEach(() => { cleanup(); sessionStorage.clear(); localStorage.clear(); vi.unstubAllGlobals(); });
 const baseRecord = {
   id: 77, title: '교통 민원 테스트', content: '도로 보수를 요청합니다.', summary: '도로 보수 요청',
-  category: '교통·국토', complaint_status: '진행중', can_manage: true, submitted_by_user: true,
+  category: '교통·국토', department_id: 2, department_name: '교통·국토', complaint_status: '진행중', can_manage: true, submitted_by_user: true,
   latest_response: '처음 저장한 답변', latest_response_state: 'draft', created_at: '2026-10-13',
 };
 const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), { status });
 function login(role = 'admin') {
-  sessionStorage.setItem('complaintai.fastapi.auth', JSON.stringify({ token: 'test-only', user: { role, department: role === 'admin' ? '교통·국토' : null, name: '테스트 계정' } }));
+  sessionStorage.setItem('complaintai.fastapi.auth', JSON.stringify({ token: 'test-only', user: { role, department_id: role === 'admin' ? 2 : null, department_name: role === 'admin' ? '교통·국토' : null, name: '테스트 계정' } }));
 }
 function server(rows = [baseRecord], counts = () => jsonResponse({ categories: [{ category: '교통·국토', count: 1 }] })) {
   const calls = [];
   vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
     const location = new URL(url); const path = location.pathname;
     calls.push({ path, search: location.search, ...options });
+    if (path === '/api/trash/counts') return jsonResponse({ total: rows.length, unassigned: 0, departments: [{ id: 2, name: '교통·국토', count: rows.filter((r) => r.can_manage).length }], policy: { capacity: 10000 } });
+    if (path === '/api/trash/items') return jsonResponse({ items: rows.map((r) => ({ ...r, deleted_by_role: r.cancelled_by_role || 'admin' })), total: rows.length });
     if (path.endsWith('/counts')) return counts();
     if (path.endsWith('/responses/send')) {
       const content = JSON.parse(options.body).content.trim();
       return jsonResponse({ complaint_status: '완료', response: { content, response_state: 'sent' } });
     }
-    if (path.endsWith('/restore')) return jsonResponse({ restored: 1 });
+    if (path.endsWith('/restore')) return jsonResponse({ restored: 1, admin_only: true });
     if (path.endsWith('/permanent')) return jsonResponse({ permanently_deleted: 1 });
     if (path === '/api/complaints') return jsonResponse({ complaints: rows, total: rows.length });
     return jsonResponse({ complaint: rows[0] });
@@ -90,11 +92,14 @@ describe('민원 작업 화면 회귀 테스트', () => {
     fireEvent.click(screen.getByRole('button', { name: '삭제된 데이터', exact: true }));
     const article = (await screen.findByText(baseRecord.title)).closest('article');
     fireEvent.click(within(article).getByRole('button', { name: '복원', exact: true }));
-    await screen.findByText('민원을 복원했습니다.');
-    expect(calls.some((call) => call.path === '/api/complaints/77/restore')).toBe(true);
+    await screen.findByText('관리자 보관함으로 복원했습니다. 민원인 목록에는 표시되지 않습니다.');
+    expect(calls.some((call) => call.path === '/api/trash/77/restore')).toBe(true);
     fireEvent.click(within(article).getByRole('button', { name: '영구 삭제', exact: true }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('로그인 비밀번호'), { target: { value: 'test-password' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '영구 삭제 실행' }));
     await screen.findByText('1건을 영구 삭제했습니다.');
-    expect(JSON.parse(calls.find((call) => call.path.endsWith('/permanent')).body)).toEqual({ password: 'test-password' });
+    expect(JSON.parse(calls.find((call) => call.path.endsWith('/permanent')).body)).toEqual({ password: 'test-password', ids: [77] });
   });
 
   it('keeps other-department trash read-only regardless of cancellation status', async () => {

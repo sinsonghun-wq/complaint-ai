@@ -1,27 +1,48 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 
-from app.agent import lifespan
+from app.agent import lifespan as agent_lifespan
+from .dedup import ensure_dedup_schema
+from .departments import ensure_intake_departments
+from .services.trash import ensure_trash_schema
+from .services.rag_imports import ensure_rag_import_schema
 from .db import connection, fetch_all, fetch_one
 from .config import WEB_ORIGINS, FILE_STORAGE_DIR
 from .services.complaint import classification_tasks, classify_submission
-from .routers import auth, complaints
+from .routers import auth, complaints, trash, rag_imports
 
 auth_header = APIKeyHeader(name="Authorization", auto_error=False)
-app = FastAPI(title="ComplaintAI FastAPI", version="1.0.0", dependencies=[Depends(auth_header)], lifespan=lifespan)
+
+@asynccontextmanager
+async def application_lifespan(app):
+    await asyncio.to_thread(ensure_trash_schema)
+    await asyncio.to_thread(ensure_dedup_schema)
+    await asyncio.to_thread(ensure_intake_departments)
+    await asyncio.to_thread(ensure_rag_import_schema)
+    async with agent_lifespan(app):
+        await startup()
+        try:
+            yield
+        finally:
+            await stop_classification()
+
+
+app = FastAPI(title="ComplaintAI FastAPI", version="1.0.0", dependencies=[Depends(auth_header)], lifespan=application_lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=WEB_ORIGINS if WEB_ORIGINS != ["*"] else ["*"], allow_credentials=WEB_ORIGINS != ["*"], allow_methods=["*"], allow_headers=["*"])
 
 FILE_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 # 라우터 등록
 app.include_router(auth.router)
+app.include_router(trash.router)
+app.include_router(rag_imports.router)
 app.include_router(complaints.router)
 
-@app.on_event("startup")
 async def startup() -> None:
     with connection() as conn:
         with conn.cursor() as cur:
@@ -43,7 +64,6 @@ async def startup() -> None:
         classification_tasks.add(task)
         task.add_done_callback(classification_tasks.discard)
 
-@app.on_event("shutdown")
 async def stop_classification() -> None:
     tasks = list(classification_tasks)
     for task in tasks:

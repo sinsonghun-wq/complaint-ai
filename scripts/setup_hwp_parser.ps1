@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 # pyhwp is installed in a project-local Python 3.11 environment because the
 # main FastAPI runtime may use a newer Python version that pyhwp does not support.
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$parserEnvironment = Join-Path $projectRoot ".hwp-parser"
+$parserEnvironment = Join-Path (Join-Path $projectRoot "dcm-back") ".hwp-parser"
 $parserPython = Join-Path $parserEnvironment "Scripts\python.exe"
 $hwp5txt = Join-Path $parserEnvironment "Scripts\hwp5txt.exe"
 

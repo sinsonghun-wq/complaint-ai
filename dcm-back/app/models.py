@@ -29,7 +29,7 @@ class UpdateComplaintBody(BaseModel):
     content: str = ""
 
 class TransferBody(BaseModel):
-    category: str
+    department_id: int = Field(strict=True, ge=1, le=7)
 
 class CancelBody(BaseModel):
     reason: str = Field(default="", max_length=2000)

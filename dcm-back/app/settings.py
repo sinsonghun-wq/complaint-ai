@@ -61,7 +61,17 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "qwen3-embedding:4b")
 EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "").rstrip("/")
 EMBEDDING_TIMEOUT_MS = int(os.getenv("EMBEDDING_TIMEOUT_MS", "60000"))
+# bge-m3's trained context is 8192 tokens. Use the same runner options for
+# ingestion and search so alternating requests do not reload the model.
+# Use the full bge-m3 context requested for reference documents.
+EMBEDDING_NUM_CTX = min(8192, max(1, int(os.getenv("EMBEDDING_NUM_CTX", "8192"))))
+EMBEDDING_NUM_BATCH = min(8192, max(1, int(os.getenv("EMBEDDING_NUM_BATCH", "8192"))))
 # 실제로 임베딩에 쓰는 모델 이름 (EMBEDDING_PROVIDER 에 따라 .env 값 중 하나). DB 기록·API 응답에 이 값을 씁니다.
 ACTIVE_EMBEDDING_MODEL = OLLAMA_EMBEDDING_MODEL if EMBEDDING_PROVIDER == "ollama" else EMBEDDING_MODEL
 TESSDATA_DIR = Path(os.getenv("TESSDATA_DIR", str(ROOT / "data" / "tessdata"))).resolve()
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()
+
+# File import vector dimensions match the existing complaint database.
+EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "1024"))
+if EMBEDDING_DIMENSIONS != 1024:
+    raise ValueError("민원 DB는 EMBEDDING_DIMENSIONS=1024 설정을 사용합니다.")

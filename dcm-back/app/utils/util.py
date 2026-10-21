@@ -5,36 +5,43 @@ import uuid
 
 from fastapi import HTTPException, UploadFile
 
-from app.dependencies import allowed
+from app.dependencies import require_department_access, require_department_id
 from app.settings import FILE_STORAGE_DIR
+
 
 def require_open_complaint(row: dict) -> None:
     if row["complaint_status"] not in {"접수", "진행중"}:
         raise HTTPException(409, "해당 민원은 삭제(취소)되었습니다." if row["complaint_status"] == "취소" else "답변이 완료된 민원은 변경할 수 없습니다.")
 
+
 def hide_cancelled_content(row: dict) -> dict:
     if row.get("complaint_status") == "취소":
         row.update(title="취소된 민원", content="", summary="", latest_response="", latest_response_state="", previous_context=None)
     return row
 
+
 def locked_complaint(cur, complaint_id: int, actor: dict) -> dict:
-    clause, args = scoped_where(actor)
-    cur.execute(f"SELECT * FROM complaints WHERE id=%s{clause} FOR UPDATE", (complaint_id, *args))
+    # Lock first and re-check the current department, closing the transfer/write race.
+    if actor["role"] == "admin":
+        require_department_id(actor)
+        cur.execute("SELECT * FROM complaints WHERE id=%s FOR UPDATE", (complaint_id,))
+    else:
+        cur.execute("SELECT * FROM complaints WHERE id=%s AND owner_user_id=%s FOR UPDATE", (complaint_id, actor["owner_id"]))
     row = cur.fetchone()
     if not row:
         raise HTTPException(404, "민원을 찾을 수 없거나 해당 민원에 접근할 수 없습니다.")
-    if row['deleted_at']:
-        raise HTTPException(409, '해당 민원은 삭제(취소)되었습니다.')
+    if actor["role"] == "admin":
+        require_department_access(actor, row)
+    if row["deleted_at"]:
+        raise HTTPException(409, "해당 민원은 삭제(취소)되었습니다.")
     return row
+
 
 def scoped_where(actor: dict, parameter: int = 2) -> tuple[str, list[Any]]:
-    if actor["role"] == "admin": return " AND category=ANY(%s)", [allowed(actor)]
+    if actor["role"] == "admin":
+        return " AND department_id=%s", [require_department_id(actor)]
     return " AND owner_user_id=%s", [actor["owner_id"]]
 
-def hide_cancelled_content(row: dict) -> dict:
-    if row.get("complaint_status") == "취소":
-        row.update(title="취소된 민원", content="", summary="", latest_response="", latest_response_state="", previous_context=None)
-    return row
 
 async def save_upload(upload: UploadFile, maximum: int) -> tuple[Path, str]:
     suffix = Path(upload.filename or "upload").suffix.lower()
@@ -44,28 +51,17 @@ async def save_upload(upload: UploadFile, maximum: int) -> tuple[Path, str]:
         while chunk := await upload.read(1024 * 1024):
             total += len(chunk)
             if total > maximum:
-                output.close(); target.unlink(missing_ok=True); raise HTTPException(413, "파일 크기 제한을 초과했습니다.")
+                output.close()
+                target.unlink(missing_ok=True)
+                raise HTTPException(413, "파일 크기 제한을 초과했습니다.")
             output.write(chunk)
     return target, suffix
 
-def locked_complaint(cur, complaint_id: int, actor: dict) -> dict:
-    clause, args = scoped_where(actor)
-    cur.execute(f"SELECT * FROM complaints WHERE id=%s{clause} FOR UPDATE", (complaint_id, *args))
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(404, "민원을 찾을 수 없거나 해당 민원에 접근할 수 없습니다.")
-    if row['deleted_at']:
-        raise HTTPException(409, '해당 민원은 삭제(취소)되었습니다.')
-    return row
-
-
-def require_open_complaint(row: dict) -> None:
-    if row["complaint_status"] not in {"접수", "진행중"}:
-        raise HTTPException(409, "해당 민원은 삭제(취소)되었습니다." if row["complaint_status"] == "취소" else "답변이 완료된 민원은 변경할 수 없습니다.")
 
 def require_admin(actor: dict[str, Any]) -> None:
     if actor["role"] != "admin":
         raise HTTPException(403, "부서 관리자 전용 기능입니다.")
+
 
 def requestFilter(content: str) -> str:
     # 공통 치환 함수: 매칭된 문자열 내의 숫자와 영문자만 '▲'로 변경

@@ -11,9 +11,11 @@ import socket
 import time
 
 from .db import connection
-from .main import process_csv_job
+from .services.imports import process_csv_job
 from .settings import IMPORT_HEARTBEAT_TIMEOUT_SECONDS, IMPORT_WORKER_POLL_SECONDS
 from .worker_manager import WORKER_LOCK_KEY
+from .dedup import ensure_dedup_schema
+from .embeddings import check_embedding_schema
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOGGER = logging.getLogger("complaintai.import-worker")
@@ -67,6 +69,8 @@ def run() -> None:
             if not cur.fetchone()["acquired"]:
                 LOGGER.info("Another CSV worker is already running; exiting.")
                 return
+        check_embedding_schema()
+        ensure_dedup_schema()
         run_loop(lease)
 
 

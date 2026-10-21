@@ -1,20 +1,40 @@
 from typing import Any
 
 from fastapi import HTTPException
-from .logger import logger
+from .departments import department_id, department_name
 from .security import current_account, verify_password
 
 def owner_id(actor: dict[str, Any]) -> str | None:
     return None if actor["role"] == "admin" else actor["owner_id"]
 
 def allowed(actor: dict[str, Any]) -> list[str]:
-    return actor.get("department_id") if actor["role"] == "admin" else []
+    name = (actor.get("department_name") or department_name(actor.get("department_id"))) if actor["role"] == "admin" else None
+    return [name] if name else []
 
 def require_department(actor: dict[str, Any]) -> list[str]:
     categories = allowed(actor)
     if not categories:
         raise HTTPException(403, "부서가 지정된 관리자만 사용할 수 있습니다.")
     return categories
+
+
+def require_department_id(actor: dict[str, Any]) -> int:
+    identifier = department_id(actor.get("department_id"))
+    if actor["role"] != "admin" or identifier is None:
+        raise HTTPException(403, "부서가 지정된 관리자만 사용할 수 있습니다.")
+    return identifier
+
+
+def can_manage(actor: dict[str, Any], row: dict[str, Any]) -> bool:
+    identifier = department_id(actor.get("department_id"))
+    return actor["role"] == "admin" and identifier is not None and identifier == row.get("department_id")
+
+
+def require_department_access(actor: dict[str, Any], row: dict[str, Any]) -> None:
+    require_department_id(actor)
+    if not can_manage(actor, row):
+        raise HTTPException(403, "담당 부서의 민원만 변경할 수 있습니다.")
+
 
 def require_user(actor: dict[str, Any]) -> None:
     if actor["role"] != "user":

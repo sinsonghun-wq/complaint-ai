@@ -1,0 +1,16 @@
+.rag-import-panel { margin-top: 24px; }
+.rag-import-panel .upload { margin-top: 16px; }
+.rag-cancel { border: 1px solid #efbcbc; border-radius: 8px; padding: 9px 13px; color: #b43232; background: #fff8f8; font: inherit; font-size: 13px; cursor: pointer; }
+.rag-cancel:hover:not(:disabled) { background: #fff0f0; }
+.rag-cancel:disabled { opacity: .5; cursor: not-allowed; }
+.rag-progress { border-top: 1px solid #365274; }
+aside .rag-cancel { color: #ffb4b4; background: #482f42; border-color: #9b6673; text-align: center; padding: 8px; font-size: 12px; }
+aside .rag-cancel:hover:not(:disabled) { background: #5b3549; }
+.rag-progress.cancelled .import-progress-fill { background: #b2bdcf; }
+.rag-progress.failed .import-progress-fill { background: #ef8d8d; }
+.rag-import-panel .notice { overflow-wrap: anywhere; }
+.rag-import-failures { margin: 16px 0; padding: 14px 16px; border: 1px solid #efd5b8; border-radius: 10px; background: #fffaf3; overflow-wrap: anywhere; }
+.rag-import-failures summary { cursor: pointer; font-weight: 600; color: #89541c; }
+.rag-import-failures p, .rag-import-failures li { font-size: 13px; line-height: 1.7; }
+.rag-import-failures ul { padding-left: 20px; }
+.rag-import-failures li + li { margin-top: 8px; }

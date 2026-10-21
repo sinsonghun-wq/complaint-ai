@@ -39,3 +39,7 @@ modelfiles
 llama.cpp/
 # HWP 파서 전용 가상환경 (scripts/setup_hwp_parser.ps1 이 만듦)
 .hwp-parser
+
+# Local OCR tools and language data
+dcm-back/data/tools/
+dcm-back/data/tessdata/

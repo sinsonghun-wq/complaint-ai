@@ -13,7 +13,8 @@ import httpx
 from . import categories as category_defs
 from . import prompts
 from . import llm
-from .settings import ACTIVE_EMBEDDING_MODEL, EMBEDDING_API_URL, EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT_MS, LLM_MODEL, LLM_NUM_CTX, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
+from .dedup import identity
+from .settings import ACTIVE_EMBEDDING_MODEL, EMBEDDING_API_URL, EMBEDDING_MODEL, EMBEDDING_PROVIDER, EMBEDDING_TIMEOUT_MS, EMBEDDING_NUM_CTX, EMBEDDING_NUM_BATCH, LLM_MODEL, LLM_NUM_CTX, OLLAMA_EMBEDDING_MODEL, OLLAMA_URL
 
 # 카테고리 이름·설명·키워드는 categories.py 한 곳에서 관리합니다.
 CATEGORIES = list(category_defs.NAMES)
@@ -37,13 +38,14 @@ def redact(value: Any) -> str:
 
 
 def fallback(title: str, content: str, reason: str = "LLM을 사용할 수 없어 규칙 기반 처리로 저장했습니다.") -> dict[str, Any]:
+    raw_identity = identity(content)
     content = redact(content)
     sentences = re.findall(r"[^.!?。]+[.!?。]?", content) or [content]
     summary = clean(" ".join(sentences[:3]))[:700]
     source = f"{title} {summary}".lower()
     ranked = sorted(((category, sum(word in source for word in words)) for category, words in KEYWORDS.items()), key=lambda item: item[1], reverse=True)
     category, score = ranked[0]
-    return {"title": clean(title) or summary[:40] or "제목 없음", "content": content, "summary": summary, "key_points": ["민원 대상과 발생 상황 확인", "생활 불편 및 안전 문제 검토", "민원인의 요청사항 확인"], "urgency": "high" if re.search(r"위험|사고|긴급|화재|붕괴", content) else "medium", "needs_review": len(content) < 20, "review_reason": "내용이 부족하여 검토가 필요합니다." if len(content) < 20 else None, "category": category if score else "기타", "confidence": 0.8 if score >= 3 else (0.6 if score else 0.3), "reason": reason, "keywords": [word for word in KEYWORDS[category] if word in source][:5] if score else [], "processing_mode": "fallback", "model": None, "prompt_version": prompts.prompt_version()}
+    return {"_raw_identity": raw_identity, "title": clean(title) or summary[:40] or "제목 없음", "content": content, "summary": summary, "key_points": ["민원 대상과 발생 상황 확인", "생활 불편 및 안전 문제 검토", "민원인의 요청사항 확인"], "urgency": "high" if re.search(r"위험|사고|긴급|화재|붕괴", content) else "medium", "needs_review": len(content) < 20, "review_reason": "내용이 부족하여 검토가 필요합니다." if len(content) < 20 else None, "category": category if score else "기타", "confidence": 0.8 if score >= 3 else (0.6 if score else 0.3), "reason": reason, "keywords": [word for word in KEYWORDS[category] if word in source][:5] if score else [], "processing_mode": "fallback", "model": None, "prompt_version": prompts.prompt_version()}
 
 
 def prompt(title: str, content: str) -> str:
@@ -97,7 +99,28 @@ async def infer_csv_mapping(headers: list[str], samples: list[dict[str, Any]]) -
         return {"title_column": "", "content_columns": [], "response_column": "", "category_column": "", "confidence": 0.0, "reason": f"헤더 매핑 LLM을 사용할 수 없습니다. ({error})", "source": "unavailable"}
 
 
-async def embeddingForSelect(text: str) -> list[float] | None:
+class EmbeddingError(ValueError):
+    """An actionable embedding failure without exposing the source document."""
+
+
+def embedding_error_message(error):
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+        try:
+            detail = str(error.response.json().get("error", ""))[:500]
+        except (ValueError, AttributeError):
+            detail = ""
+        if status == 413 or (status == 400 and "context length" in detail.lower()):
+            return f"임베딩 입력이 토큰 처리 한도({min(EMBEDDING_NUM_CTX, EMBEDDING_NUM_BATCH):,}토큰)를 초과했습니다. (HTTP {status})"
+        return f"임베딩 서버 오류입니다. (HTTP {status}) {detail}".strip()
+    if isinstance(error, httpx.TimeoutException):
+        return "임베딩 생성 시간이 초과되었습니다."
+    if isinstance(error, httpx.RequestError):
+        return "임베딩 서버에 연결하지 못했습니다."
+    return f"임베딩 결과를 읽을 수 없습니다. ({str(error)[:500]})"
+
+
+async def embeddingForSelect(text: str, *, strict: bool = False) -> list[float] | None:
     """민원 본문(또는 챗봇 검색 구절) 텍스트를 형식 없이 그대로 임베딩합니다.
 
     저장(민원 접수·수정·일괄 저장)과 검색(/api/analyze, 챗봇 조회)이 모두 이 함수를 써서
@@ -105,20 +128,37 @@ async def embeddingForSelect(text: str) -> list[float] | None:
     """
     global _embedding_unavailable_until
     if not text or not text.strip():
+        if strict:
+            raise EmbeddingError("본문이 비어 있어 임베딩을 생성할 수 없습니다.")
         return None
-    if time.monotonic() < _embedding_unavailable_until:
+    if not strict and time.monotonic() < _embedding_unavailable_until:
         return None
     try:
         # Allow model loading and embedding generation up to the configured timeout.
         async with httpx.AsyncClient(timeout=EMBEDDING_TIMEOUT_MS / 1000) as client:
             if EMBEDDING_PROVIDER == "ollama":
-                response = await client.post(f"{OLLAMA_URL}/api/embed", json={"model": OLLAMA_EMBEDDING_MODEL, "input": text, "keep_alive": "10m"})
+                response = await client.post(f"{OLLAMA_URL}/api/embed", json={
+                    "model": OLLAMA_EMBEDDING_MODEL, "input": text, "keep_alive": "10m",
+                    "truncate": not strict,
+                    "options": {"num_ctx": EMBEDDING_NUM_CTX, "num_batch": EMBEDDING_NUM_BATCH},
+                })
                 response.raise_for_status(); vector = response.json().get("embeddings", [None])[0]
             else:
                 response = await client.post(f"{EMBEDDING_API_URL}/v1/embeddings", json={"model": EMBEDDING_MODEL, "input": text, "dimensions": 1024, "encoding_format": "float"})
                 response.raise_for_status(); vector = response.json()["data"][0]["embedding"]
+        if vector is None:
+            raise ValueError("임베딩 서버가 벡터를 반환하지 않았습니다.")
         norm = math.sqrt(sum(value * value for value in vector))
         return [value / norm for value in vector] if norm else vector
-    except Exception:
-        _embedding_unavailable_until = time.monotonic() + 30
+    except Exception as error:
+        if strict:
+            # A row failure must not suppress requests for subsequent rows.
+            raise EmbeddingError(embedding_error_message(error)) from error
+        if not isinstance(error, httpx.HTTPStatusError) or error.response.status_code >= 500:
+            _embedding_unavailable_until = time.monotonic() + 30
         return None
+
+
+async def embeddingForReference(text: str) -> list[float]:
+    """Reference imports reject overlong input instead of silently truncating it."""
+    return await embeddingForSelect(text, strict=True)

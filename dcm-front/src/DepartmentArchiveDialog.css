@@ -1,0 +1,16 @@
+.department-archive-modal button {
+  min-height: 40px;
+  padding: 10px 14px;
+  border: 1px solid #d2ddec;
+  border-radius: 9px;
+  background: #fff;
+  color: #34517e;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.department-archive-modal button.danger { background: #fff8f8; border-color: #f0c6c6; color: #b43232; }
+.department-archive-modal button:hover:not(:disabled) { background: #f2f6ff; }
+.department-archive-modal button.danger:hover:not(:disabled) { background: #fff0f0; }
+.department-archive-modal button:disabled { opacity: .48; cursor: not-allowed; }
+.department-archive-modal button:focus-visible { outline: 2px solid #5e82ff; outline-offset: 3px; }

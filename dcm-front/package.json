@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run && node --test tests/importProgress.test.mjs"
+    "test": "vitest run && node --test tests/importProgress.test.mjs",
+    "test:admin": "vitest run tests/ComplaintWorkspace.test.jsx tests/DepartmentPermissions.test.jsx tests/DepartmentBulkDelete.test.jsx tests/CsvImportNotifications.test.jsx tests/RagImport.test.jsx tests/DeletedData.test.jsx tests/DeletedDataStyles.test.jsx tests/CitizenComplaintTools.test.jsx tests/CurrentAIChat.test.jsx tests/ConnectionErrors.test.jsx && node --test tests/importProgress.test.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
