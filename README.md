@@ -1,37 +1,28 @@
-# ComplaintAI
+o_o b
 
-메인 구현은 `codex/react-fastapi-migration` 브랜치의 React + FastAPI 이식본이다.
+언제나 힘내기!!!! ^__^
 
-## 처음 실행하기
+### KIN
 
-1. Docker Desktop을 실행한 뒤 프로젝트 루트에서 `docker compose up -d`를 실행한다.
-2. 빈 PostgreSQL 볼륨이라면 `database/init.sql`이 스키마를 만들고, `database/seed_demo_accounts.sql`이 개발용 일반 사용자 2개와 7개 부서 관리자 7개를 생성한다.
-3. `complaintai-react-fastapi/.env.example`을 `complaintai-react-fastapi/.env`로 복사한다.
-4. `complaintai-react-fastapi`에서 Python 의존성을 설치하고, `frontend`에서 `npm install` 후 `npm run build`를 실행한다.
-5. `complaintai-react-fastapi`에서 `uvicorn app.main:app --host 127.0.0.1 --port 8000`으로 실행한다.
+### OTL
 
-브라우저에서 `http://127.0.0.1:8000`을 연다. PostgreSQL은 로컬 포트 `5433`을 사용한다.
+### 눈눈
 
-현재 부서는 노동·기업, 교통·국토, 주택·건축, 환경·위생, 문화·행정·안전, 보건·복지, 기타다.
-기존 9개 부서 DB는 서버/워커를 중단한 뒤 `complaintai-react-fastapi`에서
-`python scripts/merge_to_seven_departments.py --apply`로 이전한다. 부서 통합에 `init.sql`을 실행하지 않는다.
-계정과 상세 절차는 [React + FastAPI README](complaintai-react-fastapi/README.md)에 있다.
-
-## 일반 사용자 테스트 계정
-
-로그인 화면의 ID에는 아래 `user-a` 또는 `user-b`를 입력한다. 두 계정은 일반 민원인 역할이며 각자의 민원 데이터를 따로 관리한다.
+### ☆˚あr늘천んト‥。 이민희
 
 | 계정 이름 | 로그인 ID | 비밀번호 |
 | --- | --- | --- |
 | 테스트 일반 사용자 A | `user-a` | `UserA!2026` |
 | 테스트 일반 사용자 B | `user-b` | `UserB!2026` |
 
-2026-10-12 현재 로컬 DB의 계정 존재·일반 사용자 역할·비밀번호 해시 일치를 확인했다. 당시 웹 서버에 연결되지 않아 HTTP 로그인 검증은 수행하지 못했다. 위 비밀번호는 로컬 개발·검증 전용이며 운영 환경에서는 반드시 변경하고 공개 문서에서 제거한다.
+### 관리자
 
-## 데이터베이스 초기화 주의사항
-
-- `database/init.sql`은 Docker가 **새로운** `postgres_data` 볼륨을 만들 때 한 번 실행된다.
-- 기존 DB에 수동 실행하면 **프로젝트 테이블 11개와 기존 데이터가 삭제되고 최신 스키마로 재생성된다.** 운영 DB나 보존해야 하는 데이터에 실행하지 않는다.
-- 기존 DB에는 자동으로 다시 실행되지 않는다. 팀원 DB 재생성 및 데이터 복원 절차는 [database/README.md](database/README.md)를 참고한다.
-- 데이터 보존이 목적이면 `init.sql`이 아닌 별도 마이그레이션을 사용한다. 초기화는 하나의 트랜잭션이며, 외부 의존성이 있으면 삭제를 중단하고 롤백한다.
-- 초기 계정은 개발·검증 전용이다. 운영 환경에서는 초기 비밀번호와 `AUTH_TOKEN_SECRET`을 반드시 교체해야 한다.
+| 계정 이름 | ID | 비밀번호 | 담당 부서 |
+| --- | --- | --- | --- |
+| 행정·안전 관리자 | `admin-administration-safety` | `AdminService!2026` | 행정·안전 |
+| 국토·교통 관리자 | `admin-land-transport` | `AdminLand!2026` | 국토·교통 |
+| 주택건축 관리자 | `admin-housing` | `AdminHousing!2026` | 주택건축 |
+| 환경·위생 관리자 | `admin-environment` | `AdminEnvironment!2026` | 환경·위생 |
+| 보건복지 관리자 | `admin-welfare` | `AdminWelfare!2026` | 보건복지 |
+| 소방 관리자 | `admin-fire` | `AdminFire!2026` | 소방 |
+| 기타 관리자 | `admin-other` | `AdminOther!2026` | 기타 |

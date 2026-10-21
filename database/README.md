@@ -1,12 +1,6 @@
 # 개발 DB 구조 동기화
 
-**2026-10-16 부서 ID 변경:** 기존 데이터가 있으면 init.sql 대신 [부서 ID 통일 안내](../docs/department-id-permissions-2026-10-16.md)의 `migrate_department_ids.py`를 사용한다. departments의 고정 ID 1~7과 계정·민원·답변·문서의 부서 외래키를 추가하며 데이터를 보존한다. 새 DB의 init.sql에는 동일한 ID 구조가 포함된다. 개발 계정은 seed_demo_accounts.sql에서 별도로 생성한다.
-
-**2026-10-19 삭제 보관함 변경:** 부서 ID 이전이 완료된 기존 DB에는 `migrations/20261019_trash_archive.sql`을 사용한다. FastAPI 시작 시 자동 적용되므로 보관함 업데이트를 위해 `init.sql`로 데이터를 지울 필요가 없다. `original_owner_user_id`, `restored_at`, `trash_previous_status`와 삭제 보관함용 부분 인덱스를 추가하고, 삭제 시각이 없던 기존 취소 민원을 보관함으로 옮긴다. 이 이전 SQL 자체는 영구 삭제하지 않는다. 10,000건 보관/유입 시 자동 정리/관리자 전용 복원 및 검증 방법은 [삭제 보관함 안내](../docs/trash-archive-2026-10-19.md)를 참고한다.
-
 `init.sql`은 PostgreSQL 16 + pgvector 기준의 **전체 재생성용** SQL이다. 기존 테이블이 있으면 삭제하고 최신 컬럼·관계·인덱스로 다시 생성한다. 스키마 동기화와 데이터 동기화는 별도 작업이다.
-
-**2026-10-19 원문 중복 제약:** 기존 DB는 `migrations/20261019_exact_dedup.sql`과 앱의 `ensure_dedup_schema()`로 추가 이전한다(FastAPI/CSV 워커 시작 시 자동). 마스킹 전 지문·글자열 후보 지문·공백 프로필과 활성 민원 부분 고유 인덱스를 추가한다. 관리자 공용 소유자 NULL도 중복으로 처리하며, 이미 저장된 중복이나 답변은 삭제하지 않는다. SQL만 실행하면 컬럼/인덱스가 준비되고 기존 지문 보충은 앱에서 수행한다. 관련 정책·검증 및 이미 마스킹된 과거 원문 제한은 [원문 중복 보완 안내](../docs/exact-dedup-fix-2026-10-19.md)를 확인한다.
 
 ## 반드시 확인
 
@@ -54,12 +48,6 @@ docker exec complaintai-db pg_restore -U complaintai -d complaintai --data-only 
 외래키를 만족하려면 계정 → 민원/작업 → 답변/실패 행 순서로 복원되어야 한다. 재민원 자기참조는 `pg_dump`가 경고할 수 있으므로 먼저 별도 테스트 DB에서 복원해 확인한다. 임의로 외래키를 끄지 않는다.
 
 ## 데이터 없이 새 개발 환경 구성
-
-현재 부서는 노동·기업, 교통·국토, 주택·건축, 환경·위생, 문화·행정·안전, 보건·복지, 기타다. 노동/기업과 교통/건설·국토를 각각 통합했다.
-
-기존 9개 부서 DB는 서버/워커를 중단한 뒤 `complaintai-react-fastapi`에서 `python scripts/merge_to_seven_departments.py --apply`로 이전한다. `--apply` 없이 실행하면 대상만 조회한다. 테이블 구조·기존 민원·일반 사용자·다른 5개 관리자 계정은 유지하고 통합 대상 관리자만 새 2개로 교체한다. 답변·작업·문서·헤더 매핑·조직 소속의 계정 참조도 이전하며, 옛 계정 토큰은 더 이상 사용할 수 없다. 같은 스크립트를 재실행해도 새 계정 비밀번호는 바뀌지 않는다.
-
-이 이전 작업에서는 `init.sql`이나 `seed_demo_accounts.sql`을 실행하지 않는다. 과거 `migrate_to_nine_departments.py`와 `migrate_to_seven_departments.sql`은 현재 체계에 실행하지 않는다. 기존 임베딩 벡터는 모두 보존해 유사도 검색을 유지한다. 변경된 부서명이 포함된 기존 벡터는 `analysis_metadata.department_merge.needs_reembedding=true`로 표시하며 필요하면 순차 재임베딩한다. 검색 권한/부서 필터는 벡터가 아닌 새 DB 카테고리를 기준으로 적용된다.
 
 빈 Docker 볼륨에서는 Compose가 `01-init.sql` → `02-seed-demo-accounts.sql` 순서로 실행한다. 이미 있는 볼륨에서는 자동으로 재실행되지 않는다.
 
