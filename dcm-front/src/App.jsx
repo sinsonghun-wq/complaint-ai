@@ -24,7 +24,7 @@ const connectionError = (status) => [502, 503].includes(status)
 
 export default function App() {
   const [auth, setAuth] = useState(() => JSON.parse(sessionStorage.getItem(key) || "null"));
-  const [server, setServer] = useState(localStorage.getItem("complaintai.fastapi.server") || window.location.origin);
+  const server = "http://localhost:8000";
   const headers = useMemo(() => auth?.token ? { Authorization: `Bearer ${auth.token}` } : {}, [auth]);
   const api = useCallback(async (path, options = {}) => {
     let response;
@@ -57,11 +57,11 @@ export default function App() {
     return () => { stopped = true; };
   }, [api, auth?.token]);
   const saveAuth = (data) => { sessionStorage.setItem(key, JSON.stringify(data)); setAuth(data); };
-  if (!auth) return <LoginScreen api={api} saveAuth={saveAuth} server={server} setServer={setServer} />;
-  return <Workspace auth={auth} api={api} signout={() => { sessionStorage.removeItem(key); setAuth(null); }} server={server} setServer={setServer} />;
+  if (!auth) return <LoginScreen api={api} saveAuth={saveAuth} server={server}/>;
+  return <Workspace auth={auth} api={api} signout={() => { sessionStorage.removeItem(key); setAuth(null); }} server={server}/>;
 }
 
-function LoginScreen({ api, saveAuth, server, setServer }) {
+function LoginScreen({ api, saveAuth, server}) {
   const [mode, setMode] = useState("login");
   const [message, setMessage] = useState("");
   const submit = async (event) => {
@@ -85,12 +85,11 @@ function LoginScreen({ api, saveAuth, server, setServer }) {
       <button className="primary">{mode === "login" ? "로그인" : "회원가입"}</button>
     </form>
     <button className="link-button" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setMessage(""); }}>{mode === "login" ? "일반 사용자 회원가입" : "로그인으로 돌아가기"}</button>
-    <label className="server-setting">처리 서버 주소<input value={server} onChange={(e) => { setServer(e.target.value); localStorage.setItem("complaintai.fastapi.server", e.target.value); }} /></label>
     <small>개인정보는 요약 결과에 노출되지 않도록 제외해 처리합니다.</small>
   </section></main>;
 }
 
-function Workspace({ auth, api, signout, server, setServer }) {
+function Workspace({ auth, api, signout, server }) {
   const isAdmin = auth.user.role === "admin";
   const [departmentCatalog, setDepartmentCatalog] = useState(departments);
   const ownDepartmentId = auth.user.department_id ?? null;
@@ -423,7 +422,7 @@ function Workspace({ auth, api, signout, server, setServer }) {
         <div className="account"><p className="navlabel">계정</p><small>{auth.user.name} · {isAdmin ? `${auth.user.department_name || departmentName(ownDepartmentId)} 관리자` : "민원인"}</small><button onClick={signout}>로그아웃</button><em>개인정보는 요약 결과에 노출되지 않도록 제외해 처리합니다.</em></div>
       </div>
     </aside>
-    <main inert={archiveTarget ? true : undefined}><header><div><span>{isAdmin ? "부서 민원 관리" : "민원인 업무"}</span><h1>{pageTitle}</h1></div><label>처리 서버 주소<input value={server} onChange={(e) => { setServer(e.target.value); localStorage.setItem("complaintai.fastapi.server", e.target.value); }} /></label></header>
+    <main inert={archiveTarget ? true : undefined}><header><div><span>{isAdmin ? "부서 민원 관리" : "민원인 업무"}</span><h1>{pageTitle}</h1></div></header>
       {message && <p className="notice">{message}</p>}
       {view === "write" && <section className="panel compose"><h2>{editing ? "민원 수정" : followUp ? "완료 민원에 재민원 작성" : "민원 내용을 입력하세요"}</h2>{followUp && <PreviousContext context={{ title: followUp.title, content: followUp.content, response: followUp.latest_response, previous_context: followUp.previous_context }} />}<label>민원 제목<input value={title} onChange={(e) => { setTitle(e.target.value); setAnalysis(null); }} /></label><label>민원 원문<textarea value={content} onChange={(e) => { setContent(e.target.value); setAnalysis(null); }} placeholder="민원 내용을 가능한 구체적으로 작성해 주세요." /></label><div className="actions compose-actions"><button className="primary" disabled={actionBusy} onClick={summarize}>{actionBusy ? "접수 중..." : editing ? "수정 완료" : followUp ? "재민원 접수" : "작성완료"}</button>{(editing || followUp) && <button onClick={() => { setEditing(null); setFollowUp(null); setTitle(""); setContent(""); setAnalysis(null); }}>작성 취소</button>}</div></section>}
       {view === "upload" && <><section className="panel compose">
