@@ -1,4 +1,5 @@
 .rag-import-panel { margin-top: 24px; }
+.rag-resume { border: 1px solid #92b1e6; border-radius: 8px; padding: 8px; color: #d3e3ff; background: #263d60; font: inherit; font-size: 12px; cursor: pointer; }
 .rag-import-panel .upload { margin-top: 16px; }
 .rag-cancel { border: 1px solid #efbcbc; border-radius: 8px; padding: 9px 13px; color: #b43232; background: #fff8f8; font: inherit; font-size: 13px; cursor: pointer; }
 .rag-cancel:hover:not(:disabled) { background: #fff0f0; }

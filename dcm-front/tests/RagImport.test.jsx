@@ -34,6 +34,10 @@ function setup() {
       control.state = reference({ status: 'cancelled', stage: 'cancelled', completed_rows: 100, saved_rows: 100 });
       return response({ ...control.state, message: '해당 작업이 취소되었습니다. 이미 저장된 데이터는 유지됩니다.' });
     }
+    if (path === '/api/rag-imports/rag-job/resume') {
+      control.state = reference({ status:'queued', stage:'chunking', completed_rows:100, saved_rows:100, deferred_rows:1, resumable_rows:1 });
+      return response(control.state);
+    }
     if (path === '/api/imports') return response({ job_id: 'complaint-job', status: 'queued', total_rows: 300, needs_mapping: false });
     if (path === '/api/imports/complaint-job') return response({ status: 'processing', completed_rows: 100, total_rows: 300 });
     throw new Error(`Unexpected API ${path}`);
@@ -146,4 +150,29 @@ it('restores exception counts after reload and paginates the details', async () 
   fireEvent.click(screen.getByRole('button', { name: '다음 20건 보기' }));
   expect(await screen.findByText('CSV 24행')).toBeTruthy();
   expect(screen.queryByRole('button', { name: '다음 20건 보기' })).toBeNull();
+});
+
+it('shows deferred originals separately from committed chunk progress', async () => {
+  const control=setup();render(<App />);
+  const poll=await start(control);
+  control.state=reference({ stage:'chunking',completed_rows:204,saved_rows:204,deferred_rows:1,long_processed_rows:0,
+    active_source_row:19,active_chunks_total:13,active_chunks_completed:8 });
+  await act(async()=>{await poll();});
+  expect(screen.getByText('긴 원문 조각 처리 중')).toBeTruthy();
+  expect(screen.getByText('긴 원문 후순위 1건 · 미처리 1건')).toBeTruthy();
+  expect(screen.getByText('CSV 19행 · 조각 8 / 13개 저장')).toBeTruthy();
+  expect(screen.getByRole('progressbar',{name:'RAG 파일 처리'}).getAttribute('aria-valuenow')).toBe('99');
+  expect(within(panel()).queryByText(/처리하지 못한 항목/)).toBeNull();
+});
+
+it('resumes a preserved long original without uploading its CSV again', async () => {
+  const control=setup();
+  control.latest=reference({ status:'cancelled',stage:'cancelled',completed_rows:100,saved_rows:100,deferred_rows:1,resumable_rows:1 });
+  render(<App />);
+  const button=await within(panel()).findByRole('button',{name:'긴 원문 이어서 처리'});
+  fireEvent.click(button);fireEvent.click(button);
+  await screen.findByText('긴 원문 후순위 대기');
+  expect(control.calls.filter(call=>call.path.endsWith('/resume'))).toHaveLength(1);
+  expect(control.calls.some(call=>call.path==='/api/rag-imports' && call.method==='POST')).toBe(false);
+  expect(within(panel()).getByRole('button',{name:'RAG 자료 처리 중...'}).disabled).toBe(true);
 });

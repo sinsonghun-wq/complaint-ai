@@ -18,6 +18,13 @@ from ..services.rag_imports import BATCH_SIZE, reference_mapping
 
 router = APIRouter(prefix="/api/rag-imports", tags=["RAG 자료 가져오기"])
 PUBLIC_COLUMNS = "id,source_file,department_id,status,stage,total_rows,completed_rows,saved_rows,duplicate_rows,failed_rows,last_error,embedding_model,created_at,finished_at"
+PUBLIC_COLUMNS += ',deferred_rows,long_processed_rows,active_source_row,active_chunks_total,active_chunks_completed'
+
+
+def with_resume_info(row):
+    if row:
+        row['resumable_rows'] = fetch_one("SELECT count(*) AS n FROM department_documents_chunk_state WHERE job_id=%s AND status<>'ready'", (row['id'],))['n']
+    return row
 
 
 def start_worker(job_id):
@@ -61,7 +68,7 @@ async def create_import(background_tasks: BackgroundTasks, file: UploadFile = Fi
 @router.get("/latest")
 def latest_import(actor: dict = Depends(actor_from_auth)):
     require_admin(actor)
-    return {"job": fetch_one(f"SELECT {PUBLIC_COLUMNS} FROM rag_import_jobs WHERE created_by=%s ORDER BY created_at DESC LIMIT 1", (actor["sub"],))}
+    return {"job": with_resume_info(fetch_one(f"SELECT {PUBLIC_COLUMNS} FROM rag_import_jobs WHERE created_by=%s ORDER BY created_at DESC LIMIT 1", (actor["sub"],)))}
 
 
 @router.get("/{job_id}")
@@ -72,7 +79,7 @@ def status(job_id: uuid.UUID, actor: dict = Depends(actor_from_auth)):
         raise HTTPException(404, "RAG 자료 처리 작업을 찾지 못했습니다.")
     if str(row.pop("created_by")) != actor["sub"]:
         raise HTTPException(403, "본인이 시작한 RAG 자료 처리 작업만 조회할 수 있습니다.")
-    return {**row, "batch_size": BATCH_SIZE}
+    return {**with_resume_info(row), "batch_size": BATCH_SIZE}
 
 
 @router.get("/{job_id}/failures")
@@ -97,7 +104,31 @@ def cancel(job_id: uuid.UUID, actor: dict = Depends(actor_from_auth)):
         if str(row["created_by"]) != actor["sub"]:
             raise HTTPException(403, "본인이 시작한 RAG 자료 처리 작업만 취소할 수 있습니다.")
         if row["status"] in ("queued", "processing"):
-            db.execute("""UPDATE rag_import_jobs SET status='cancelled',stage='cancelled',completed_rows=checkpoint_rows,
+            db.execute("""UPDATE rag_import_jobs SET status='cancelled',stage='cancelled',completed_rows=checkpoint_rows-deferred_rows+long_processed_rows,
                 worker_id=NULL,finished_at=NOW(),last_error=NULL WHERE id=%s""", (job_id,))
+            db.execute("UPDATE department_documents_chunk_state SET status='cancelled',updated_at=NOW() WHERE job_id=%s AND status IN ('deferred','processing')", (job_id,))
         result = db.execute(f"SELECT {PUBLIC_COLUMNS} FROM rag_import_jobs WHERE id=%s", (job_id,)).fetchone()
-    return {**result, "message": "해당 작업이 취소되었습니다. 이미 저장된 데이터는 유지됩니다." if result["status"] == "cancelled" else "이미 종료된 RAG 자료 처리 작업입니다."}
+    return {**with_resume_info(result), "message": "해당 작업이 취소되었습니다. 이미 저장된 데이터는 유지됩니다." if result["status"] == "cancelled" else "이미 종료된 RAG 자료 처리 작업입니다."}
+
+
+@router.post('/{job_id}/resume')
+def resume(job_id: uuid.UUID, background_tasks: BackgroundTasks, actor: dict = Depends(actor_from_auth)):
+    require_admin(actor)
+    with connection() as db:
+        job = db.execute('SELECT * FROM rag_import_jobs WHERE id=%s FOR UPDATE', (job_id,)).fetchone()
+        if not job: raise HTTPException(404, 'RAG 자료 처리 작업을 찾지 못했습니다.')
+        if str(job['created_by']) != actor['sub']: raise HTTPException(403, '본인이 시작한 RAG 자료 처리 작업만 재개할 수 있습니다.')
+        if job['status'] in ('queued','processing'): raise HTTPException(409, '이미 실행 중인 작업입니다.')
+        states = db.execute("SELECT status FROM department_documents_chunk_state WHERE job_id=%s AND status<>'ready' FOR UPDATE", (job_id,)).fetchall()
+        if not states: raise HTTPException(409, '이어서 처리할 긴 원문이 없습니다.')
+        failed = sum(row['status'] == 'failed' for row in states)
+        removed = db.execute("DELETE FROM rag_import_failures WHERE job_id=%s AND phase='chunk'", (job_id,)).rowcount
+        db.execute("UPDATE department_documents_chunk_state SET status='deferred',last_error=NULL WHERE job_id=%s AND status<>'ready'", (job_id,))
+        row = db.execute(f'''UPDATE rag_import_jobs SET status='queued',stage=%s,finished_at=NULL,worker_id=NULL,last_error=NULL,
+            failed_rows=GREATEST(0,failed_rows-%s),long_processed_rows=GREATEST(0,long_processed_rows-%s),
+            completed_rows=checkpoint_rows-deferred_rows+GREATEST(0,long_processed_rows-%s),
+            active_source_row=NULL,active_chunks_total=0,active_chunks_completed=0
+            WHERE id=%s RETURNING {PUBLIC_COLUMNS}''',
+            ('chunking' if job['checkpoint_rows'] >= job['total_rows'] else 'queued', removed, failed, failed, job_id)).fetchone()
+    background_tasks.add_task(start_worker, job_id)
+    return {**with_resume_info(row), 'message': '긴 원문 처리를 재개합니다. 저장된 조각 임베딩은 이어서 사용합니다.'}

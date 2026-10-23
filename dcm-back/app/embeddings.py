@@ -24,7 +24,7 @@ def check_embedding_schema():
             FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid
             JOIN pg_namespace n ON n.oid=c.relnamespace
             WHERE n.nspname='public' AND c.relkind='r'
-              AND c.relname IN ('complaints','department_documents','rag_chunks')
+              AND c.relname IN ('complaints','department_documents','rag_chunks','department_documents_chunks')
               AND a.attname='embedding' AND NOT a.attisdropped""").fetchall()
     for row in rows:
         if row['type'] != f'vector({EMBEDDING_DIMENSIONS})':

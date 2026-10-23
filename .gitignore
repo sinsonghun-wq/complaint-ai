@@ -43,3 +43,4 @@ llama.cpp/
 # Local OCR tools and language data
 dcm-back/data/tools/
 dcm-back/data/tessdata/
+dcm-back/data/tokenizers/

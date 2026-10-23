@@ -11,6 +11,7 @@ export function useRagImport(api, enabled = true) {
   const [job, setJob] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [message, setMessage] = useState("");
   const [failures, setFailures] = useState(null);
   const [failureError, setFailureError] = useState("");
@@ -98,7 +99,19 @@ export function useRagImport(api, enabled = true) {
     } catch (error) { if (alive.current && request === sequence.current) setFailureError(error.message); }
     finally { failureLock.current = false; if (alive.current) setLoadingFailures(false); }
   };
-  return { job, uploading, cancelling, message, busy: uploading || running(job), upload, cancel, failures, failureError, loadingFailures, loadFailures };
+  const resume = async () => {
+    const target = latestJob.current;
+    if (uploadLock.current || running(target) || !target?.resumable_rows) return;
+    uploadLock.current = true; cancelWanted.current = false; sequence.current++; setResuming(true); setMessage("");
+    try {
+      const next = await api(`/api/rag-imports/${target.id}/resume`, { method: "POST" });
+      if (!alive.current) return;
+      publish(next); setFailures(null); setFailureError("");
+      if (cancelWanted.current) await cancelJob(next);
+    } catch (error) { if (alive.current) setMessage(error.message); }
+    finally { uploadLock.current = false; if (alive.current) { setResuming(false); setCancelling(false); } }
+  };
+  return { job, uploading, cancelling, resuming, message, busy: uploading || resuming || running(job), upload, cancel, resume, failures, failureError, loadingFailures, loadFailures };
 }
 
 function RagImportFailures({ importer }) {
@@ -108,7 +121,7 @@ function RagImportFailures({ importer }) {
     if (event.currentTarget.open && failures === null && !loadingFailures) loadFailures();
   }}>
     <summary>처리하지 못한 항목 {job.failed_rows.toLocaleString()}건</summary>
-    <p>아래 항목은 저장하지 않고 나머지 자료를 계속 처리했습니다. 행 번호는 CSV 헤더를 포함합니다.</p>
+    <p>아래 항목은 RAG 검색용 처리를 완료하지 못했습니다. 긴 원문과 저장된 조각은 보존됩니다. 행 번호는 CSV 헤더를 포함합니다.</p>
     {failures?.length > 0 && <ul>{failures.map((item) => <li key={item.source_row}><strong>CSV {item.source_row.toLocaleString()}행</strong>: {item.reason}</li>)}</ul>}
     {loadingFailures && <p role="status">제외 항목을 불러오는 중...</p>}
     {failureError && <p role="alert">{failureError}</p>}
@@ -130,6 +143,8 @@ export function RagImportPanel({ importer, departments, ownDepartmentId }) {
     <label className="upload">RAG CSV 파일 선택<input type="file" accept=".csv,text/csv" disabled={importer.busy} onChange={(event) => setFile(event.target.files?.[0] || null)} /><small>{file?.name || "CSV 파일만 지원"}</small></label>
     <div className="actions compose-actions"><button className="primary" disabled={importer.busy} onClick={() => importer.upload(file, department)}>{importer.busy ? "RAG 자료 처리 중..." : "RAG 데이터 처리 시작"}</button>{importer.busy && <button className="danger rag-cancel" disabled={importer.cancelling} onClick={importer.cancel}>{importer.cancelling ? "취소 중..." : "RAG 작업 취소"}</button>}</div>
     <p className="muted">100건마다 저장을 확정하고 진행률에 반영합니다. 취소하면 이미 저장된 데이터는 유지됩니다.</p>
+    {!importer.busy && importer.job?.resumable_rows > 0 && <button className="primary" onClick={importer.resume}>긴 원문 이어서 처리</button>}
+    <p className="muted">8,192토큰 초과 원문은 후순위로 보관합니다. 짧은 자료를 먼저 처리한 뒤 긴 원문을 조각으로 저장하며, 모든 조각이 완료된 원문만 검색에 사용합니다.</p>
   </section>;
 }
 
@@ -138,7 +153,7 @@ export function RagImportProgress({ importer }) {
   if (!job && !uploading) return null;
   const completed = job?.completed_rows || 0, total = job?.total_rows || 0;
   const percentage = job?.status === "completed" ? 100 : total ? Math.min(99, Math.floor(completed / total * 100)) : 0;
-  const status = uploading ? "파일 업로드 중" : job?.stage === "counting" ? "전체 건수 확인 중" : ({ queued: "대기 중", processing: "임베딩·저장 중", completed: "처리 완료", cancelled: "작업 취소됨", failed: "처리 실패" }[job?.status] || "준비 중");
+  const status = uploading ? "파일 업로드 중" : job?.stage === "counting" ? "전체 건수 확인 중" : job?.stage === "chunking" && running(job) ? (job.status === "queued" ? "긴 원문 후순위 대기" : "긴 원문 조각 처리 중") : ({ queued: "대기 중", processing: "임베딩·저장 중", completed: "처리 완료", cancelled: "작업 취소됨", failed: "처리 실패" }[job?.status] || "준비 중");
   return <section className={`import-progress rag-progress ${job?.status || ""}`} aria-label="RAG 파일 처리 진행률">
     <div className="import-progress-heading"><span>RAG 파일 처리</span><strong>{percentage}%</strong></div>
     <small>{status}</small>
@@ -146,7 +161,10 @@ export function RagImportProgress({ importer }) {
     <small className="import-progress-file" title={job?.source_file}>{job?.source_file || "CSV 업로드"}</small>
     <small>{completed.toLocaleString()} / {total ? `${total.toLocaleString()}건 확정 처리` : "전체 건수 확인 중"}</small>
     {job && <small>저장 {job.saved_rows.toLocaleString()} · 중복 {job.duplicate_rows.toLocaleString()}{job.failed_rows ? ` · 제외 ${job.failed_rows.toLocaleString()}` : ""}</small>}
+    {job?.deferred_rows > 0 && <small>긴 원문 후순위 {job.deferred_rows.toLocaleString()}건 · 미처리 {Math.max(0, job.deferred_rows - (job.long_processed_rows || 0)).toLocaleString()}건</small>}
+    {job?.active_source_row && job?.active_chunks_total > 0 && <small>CSV {job.active_source_row.toLocaleString()}행 · 조각 {job.active_chunks_completed.toLocaleString()} / {job.active_chunks_total.toLocaleString()}개 저장</small>}
     {importer.busy && <button className="danger rag-cancel" disabled={cancelling} onClick={cancel}>{cancelling ? "취소 중..." : "RAG 작업 취소"}</button>}
+    {!importer.busy && job?.resumable_rows > 0 && <button className="rag-resume" onClick={importer.resume}>긴 원문 이어서 처리</button>}
     {job?.status === "cancelled" && <small role="status">해당 작업이 취소되었습니다.</small>}
     {job?.status === "failed" && <small role="alert">{job.last_error}</small>}
   </section>;

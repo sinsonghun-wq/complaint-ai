@@ -16,6 +16,7 @@ from .logger import logger
 from . import llm as llm_backend
 from .ai import embeddingForSelect
 from .db import fetch_all
+from .services.rag_retrieval import retrieve as retrieve_references
 from langgraph.checkpoint.memory import MemorySaver
 
 RAG_ROW_LIMIT = 3
@@ -26,16 +27,7 @@ async def aiFAQ(content: str, is_described: bool) -> dict:
     rows = []
     vector = await embeddingForSelect(content) if is_described  else None
     if vector:
-        rows = fetch_all(
-            f"""
-                SELECT SUBSTRING(content, 1, 5000) AS content
-                FROM department_documents 
-                WHERE deleted_at IS NULL 
-                ORDER BY embedding <=> %s::vector 
-                LIMIT {RAG_ROW_LIMIT};
-            """,
-            (str(vector),)
-        )
+        rows = await retrieve_references(vector, content)
 
     return {"code": 0, "result": rows}
 
@@ -86,8 +78,10 @@ async def llm_worker(llm, tools_dict):
     while True:
         future = None
         user_id = "unknown"
+        dequeued = False
         try:
             user_id, chatbody, future = await request_queue.get()
+            dequeued = True
             query = chatbody.content
             agent_mode = chatbody.agent_mode
 
@@ -189,7 +183,8 @@ async def llm_worker(llm, tools_dict):
             if future and not future.done():
                 future.set_exception(e)
         finally:
-            request_queue.task_done()
+            if dequeued:
+                request_queue.task_done()
 
 def parse_tool_output_safe(tool_output):
     if isinstance(tool_output, dict):
