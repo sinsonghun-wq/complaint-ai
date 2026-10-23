@@ -23,7 +23,12 @@ ARTICLE = r'제\s*\d+\s*조(?:\s*의\s*\d+)?'
 ANNEX = r'별표\s*\d+(?:\s*의\s*\d+)?'
 HEADING = re.compile(rf'(?m)(?<![가-힣A-Za-z0-9])({ARTICLE}|{ANNEX})[ \t]*(?:[(（][^\n)）]{{1,120}}[)）](?![ \t]*(?:에[ \t]*(?:따라|따른|도|서)|의[ \t]*규정|[을를](?:[ \t]|$)))|(?=\])|(?=$))')
 REFERENCE = re.compile(rf'({ARTICLE}|{ANNEX})')
-EXTERNAL = re.compile(rf'(?:[「『“"]([^」』”"]+)[」』”"]|(?<![가-힣])([가-힣A-Za-z0-9·ㆍ]+(?:법률|시행령|시행규칙|조례|규칙|법)))\s*({ARTICLE}|{ANNEX})')
+_LAW = r'[^「」『』“”"\n]{1,200}'
+EXTERNAL = re.compile(rf'(?:「(?P<corner>{_LAW})」|『(?P<double>{_LAW})』|“(?P<curly>{_LAW})”|"(?P<ascii>{_LAW})"|(?<![가-힣])(?P<bare>[가-힣A-Za-z0-9·ㆍ]{{1,120}}(?:법률|시행령|시행규칙|조례|규칙|법)))\s*(?P<clause>{ARTICLE}|{ANNEX})')
+
+
+def referenced_law(match):
+    return next(match.group(name).strip() for name in ('corner','double','curly','ascii','bare') if match.group(name))
 
 
 @lru_cache(maxsize=1)
@@ -76,8 +81,8 @@ def document_structure(text):
     for i, (start, identifier, heading) in enumerate(starts):
         end = starts[i+1][0] if i+1 < len(starts) else len(text)
         body = text[start:end]
-        external_matches = [m for m in EXTERNAL.finditer(body) if (m.group(1) or m.group(2)) not in ('법','법률')]
-        external = [{'law': m.group(1) or m.group(2), 'key': key(m.group(3))} for m in external_matches]
+        external_matches = [m for m in EXTERNAL.finditer(body) if referenced_law(m) not in ('법','법률')]
+        external = [{'law': referenced_law(m), 'key': key(m.group('clause'))} for m in external_matches]
         external_spans = [m.span() for m in external_matches]
         references = list(dict.fromkeys(key(m.group()) for m in REFERENCE.finditer(body)
                                        if not any(a <= m.start() < b for a, b in external_spans)))

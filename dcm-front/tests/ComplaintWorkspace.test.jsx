@@ -60,7 +60,7 @@ describe('민원 작업 화면 회귀 테스트', () => {
 
   it('sends the current edited answer and shows the server-confirmed text', async () => {
     login(); const calls = server(); render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '분류 목록', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: '분류 목록 · 민원 접수', exact: true }));
     const article = (await screen.findByText(baseRecord.title)).closest('article');
     fireEvent.click(within(article).getByRole('button', { name: '민원 접수', exact: true }));
     fireEvent.change(await screen.findByLabelText('답변 내용'), { target: { value: '  수정한 최종 답변입니다.  ' } });
@@ -75,7 +75,7 @@ describe('민원 작업 화면 회귀 테스트', () => {
 
   it('rejects a blank edited answer without sending the old draft', async () => {
     login(); const calls = server(); render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '분류 목록', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: '분류 목록 · 민원 접수', exact: true }));
     const article = (await screen.findByText(baseRecord.title)).closest('article');
     fireEvent.click(within(article).getByRole('button', { name: '민원 접수', exact: true }));
     fireEvent.change(await screen.findByLabelText('답변 내용'), { target: { value: '  ' } });
@@ -112,7 +112,7 @@ describe('민원 작업 화면 회귀 테스트', () => {
 
   it('does not expose archive actions for cancelled active complaints', async () => {
     login(); server([{ ...baseRecord, complaint_status: '취소', deleted_at: null }]); render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '분류 목록', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: '분류 목록 · 민원 접수', exact: true }));
     const article = (await screen.findByText(baseRecord.title)).closest('article');
     expect(within(article).getByText('취소 · 처리 불가')).toBeTruthy();
     expect(within(article).queryByRole('button')).toBeNull();
@@ -120,7 +120,7 @@ describe('민원 작업 화면 회귀 테스트', () => {
 
   it('keeps a successful list usable when category counts fail', async () => {
     login(); server([baseRecord], () => jsonResponse({ detail: '건수 조회 실패' }, 503)); render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '분류 목록', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: '분류 목록 · 민원 접수', exact: true }));
     expect(await screen.findByText(baseRecord.title)).toBeTruthy();
     expect(await screen.findByText(/카테고리 건수를 불러오지 못했습니다/)).toBeTruthy();
     expect(screen.getByText('1건')).toBeTruthy();
@@ -130,7 +130,7 @@ describe('민원 작업 화면 회귀 테스트', () => {
     let resolveCounts;
     const pendingCounts = new Promise((resolve) => { resolveCounts = resolve; });
     login(); server([baseRecord], async () => jsonResponse(await pendingCounts)); render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '분류 목록', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: '분류 목록 · 민원 접수', exact: true }));
     expect(await screen.findByText(baseRecord.title)).toBeTruthy();
     resolveCounts({ categories: [{ category: '교통·국토', count: 4 }] });
     await waitFor(() => expect(screen.getByRole('button', { name: '4교통·국토' })).toBeTruthy());
@@ -141,7 +141,7 @@ describe('민원 작업 화면 회귀 테스트', () => {
     vi.stubGlobal('fetch', vi.fn(async (url) => new URL(url).pathname.endsWith('/counts')
       ? jsonResponse({ categories: [{ category: '교통·국토', count: 6 }] })
       : jsonResponse({ detail: '목록 조회 실패' }, 503)));
-    render(<App />); fireEvent.click(screen.getByRole('button', { name: '분류 목록', exact: true }));
+    render(<App />); fireEvent.click(screen.getByRole('button', { name: '분류 목록 · 민원 접수', exact: true }));
     expect(await screen.findByText('목록 조회 실패')).toBeTruthy();
     expect(screen.getByRole('button', { name: '6교통·국토' })).toBeTruthy();
   });

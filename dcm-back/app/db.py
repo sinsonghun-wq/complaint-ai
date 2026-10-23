@@ -10,10 +10,11 @@ from .settings import DATABASE_URL
 
 
 @contextmanager
-def connection() -> Iterator[psycopg.Connection]:
+def connection(*, connect_timeout: int | None = None) -> Iterator[psycopg.Connection]:
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not configured")
-    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+    options = {'connect_timeout': connect_timeout} if connect_timeout is not None else {}
+    with psycopg.connect(DATABASE_URL, row_factory=dict_row, **options) as conn:
         yield conn
 
 

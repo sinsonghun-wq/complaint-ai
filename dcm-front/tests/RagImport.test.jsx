@@ -45,6 +45,10 @@ function setup() {
   control.intervals = vi.spyOn(window, 'setInterval');
   return control;
 }
+function openImports() {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: '파일 자료 관리', exact: true }));
+}
 const panel = () => screen.getByRole('region', { name: 'RAG용 데이터 삽입' });
 function chooseFile(name = 'rules.csv') {
   fireEvent.change(within(panel()).getByLabelText(/RAG CSV 파일 선택/), { target: { files: [new File(['제목,본문\n규칙,원문'], name)] } });
@@ -57,7 +61,7 @@ async function start(control) {
 }
 
 it('rejects non-CSV files with an explanation before sending an upload', async () => {
-  const control = setup(); render(<App />);
+  const control = setup(); openImports();
   chooseFile('rules.pdf');
   fireEvent.click(within(panel()).getByRole('button', { name: 'RAG 데이터 처리 시작' }));
   expect(await screen.findByText('파일 형식이 다릅니다. RAG용 데이터는 CSV 파일만 업로드할 수 있습니다.')).toBeTruthy();
@@ -65,9 +69,9 @@ it('rejects non-CSV files with an explanation before sending an upload', async (
 });
 
 it('places independent complaint and RAG progress in the sidebar in that order', async () => {
-  const control = setup(); render(<App />);
-  fireEvent.change(screen.getByLabelText(/^파일 선택/), { target: { files: [new File(['제목,본문'], 'complaints.csv')] } });
-  fireEvent.click(screen.getByRole('button', { name: '파일 일괄 처리' }));
+  const control = setup(); openImports();
+  fireEvent.change(screen.getByLabelText(/^민원 파일 선택/), { target: { files: [new File(['제목,본문'], 'complaints.csv')] } });
+  fireEvent.click(screen.getByRole('button', { name: '외부 민원 저장 시작' }));
   await screen.findByRole('progressbar', { name: '민원 파일 처리' });
   const poll = await start(control);
   control.state = reference({ completed_rows: 100, saved_rows: 100 });
@@ -89,25 +93,25 @@ it('places independent complaint and RAG progress in the sidebar in that order',
 });
 
 it('cancels from another screen and prevents a stale poll from reviving progress', async () => {
-  const control = setup(); render(<App />);
+  const control = setup(); openImports();
   const poll = await start(control);
   control.state = reference({ completed_rows: 100, saved_rows: 100 });
   control.holdPoll = true;
   let pending;
   await act(async () => { pending = poll(); });
-  fireEvent.click(screen.getByRole('button', { name: '분류 목록', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: '분류 목록 · 민원 접수', exact: true }));
   fireEvent.click(screen.getByRole('button', { name: 'RAG 작업 취소' }));
   await screen.findByText('해당 작업이 취소되었습니다.');
   await act(async () => { control.finishPoll(); await pending; });
   expect(screen.getByText('작업 취소됨')).toBeTruthy();
   expect(screen.getByText('저장 100 · 중복 0')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'RAG 작업 취소' })).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: '새 민원', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: '파일 자료 관리', exact: true }));
   expect(screen.getByText('해당 작업이 취소되었습니다. 이미 저장된 데이터는 유지됩니다.')).toBeTruthy();
 });
 
 it('honors cancellation requested while the upload response is pending', async () => {
-  const control = setup(); control.holdUpload = true; render(<App />);
+  const control = setup(); control.holdUpload = true; openImports();
   chooseFile(); fireEvent.click(within(panel()).getByRole('button', { name: 'RAG 데이터 처리 시작' }));
   fireEvent.click(within(panel()).getByRole('button', { name: 'RAG 작업 취소' }));
   expect(within(panel()).getByRole('button', { name: '취소 중...' }).disabled).toBe(true);
@@ -117,14 +121,14 @@ it('honors cancellation requested while the upload response is pending', async (
 });
 
 it('restores the latest job after reload without starting another upload', async () => {
-  const control = setup(); control.latest = reference({ completed_rows: 100, saved_rows: 99, duplicate_rows: 1 }); render(<App />);
+  const control = setup(); control.latest = reference({ completed_rows: 100, saved_rows: 99, duplicate_rows: 1 }); openImports();
   await screen.findByText('100 / 205건 확정 처리');
   expect(within(panel()).getByRole('button', { name: 'RAG 자료 처리 중...' }).disabled).toBe(true);
   expect(control.calls.some((call) => call.method === 'POST')).toBe(false);
 });
 
 it('completes despite excluded rows and shows their row numbers and reasons separately', async () => {
-  const control = setup(); render(<App />);
+  const control = setup(); openImports();
   const poll = await start(control);
   control.state = reference({ status: 'completed', stage: 'completed', completed_rows: 205, saved_rows: 203, failed_rows: 2 });
   control.failures = [{ source_row: 19, reason: '임베딩 입력이 8,192토큰을 초과했습니다. (HTTP 413)' }, { source_row: 102, reason: '임베딩 서버 응답 오류' }];
@@ -142,7 +146,7 @@ it('restores exception counts after reload and paginates the details', async () 
   const control = setup();
   control.latest = reference({ status: 'completed', stage: 'completed', completed_rows: 205, saved_rows: 182, failed_rows: 23 });
   control.failures = Array.from({ length: 23 }, (_, i) => ({ source_row: i + 2, reason: `저장하지 못한 항목 ${i + 1}` }));
-  render(<App />);
+  openImports();
   expect(await screen.findByText(/RAG 자료 처리가 완료되었습니다.*처리하지 못한 항목 23건 제외/)).toBeTruthy();
   fireEvent.click(screen.getByText('처리하지 못한 항목 23건'));
   expect(await screen.findByText('CSV 21행')).toBeTruthy();
@@ -153,7 +157,7 @@ it('restores exception counts after reload and paginates the details', async () 
 });
 
 it('shows deferred originals separately from committed chunk progress', async () => {
-  const control=setup();render(<App />);
+  const control=setup();openImports();
   const poll=await start(control);
   control.state=reference({ stage:'chunking',completed_rows:204,saved_rows:204,deferred_rows:1,long_processed_rows:0,
     active_source_row:19,active_chunks_total:13,active_chunks_completed:8 });
@@ -168,7 +172,7 @@ it('shows deferred originals separately from committed chunk progress', async ()
 it('resumes a preserved long original without uploading its CSV again', async () => {
   const control=setup();
   control.latest=reference({ status:'cancelled',stage:'cancelled',completed_rows:100,saved_rows:100,deferred_rows:1,resumable_rows:1 });
-  render(<App />);
+  openImports();
   const button=await within(panel()).findByRole('button',{name:'긴 원문 이어서 처리'});
   fireEvent.click(button);fireEvent.click(button);
   await screen.findByText('긴 원문 후순위 대기');

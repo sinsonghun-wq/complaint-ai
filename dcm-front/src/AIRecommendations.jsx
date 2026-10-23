@@ -11,6 +11,27 @@ const stageLabels = {
   generation: '추천 답변을 작성하고 있어요.',
 };
 
+// Allow the backend's 20-minute deadline to return its own error first.
+export const CHAT_REQUEST_TIMEOUT_MS = 1210000;
+
+export async function requestChat(api, body, controller, timeoutMs = CHAT_REQUEST_TIMEOUT_MS) {
+  const { signal } = controller;
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(new Error(signal.reason === 'timeout'
+      ? '답변 대기 시간이 초과되었습니다. 다시 시도해 주세요.' : '답변 요청을 취소했습니다.'));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  });
+  const timer = window.setTimeout(() => controller.abort('timeout'), timeoutMs);
+  try {
+    return await Promise.race([api('/api/chat', { method: 'POST', signal,
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), aborted]);
+  } finally {
+    window.clearTimeout(timer); signal.removeEventListener('abort', onAbort);
+  }
+}
+
 export function useRecommendations(api) {
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState('');
@@ -62,8 +83,11 @@ export function useRecommendations(api) {
   const generation = useRef(0);
   const activeTurn = useRef(null);
   const mounted = useRef(true);
+  const activeController = useRef(null);
 
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; generation.current++; }; }, []);
+  useEffect(() => { mounted.current = true; return () => {
+    mounted.current = false; generation.current++; activeController.current?.abort('unmount');
+  }; }, []);
   const busy = creating || ['queued', 'processing'].includes(job?.status);
 
   const updateTurn = useCallback((id, next) => {
@@ -172,11 +196,9 @@ export function useRecommendations(api) {
           agent_mode: agentMode 
         };
 
-        const decision = await api('/api/chat', { 
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' }, 
-          body: JSON.stringify(chatBody) 
-        });
+        const controller = new AbortController();
+        activeController.current = controller;
+        const decision = await requestChat(api, chatBody, controller);
 
         if (!mounted.current || sequence !== generation.current) return false;
 
@@ -231,7 +253,9 @@ export function useRecommendations(api) {
       }
       return false;
     } finally {
-      if (mounted.current && sequence === generation.current) setCreating(false);
+      if (mounted.current && sequence === generation.current) {
+        activeController.current = null; setCreating(false);
+      }
     }
   }, [api, updateTurn, messages, toolsOpen, toolContext, openTool, cancelLookup, agentMode]);
 
@@ -276,7 +300,9 @@ export function useRecommendations(api) {
     setMessages([]); setDraft(''); setJob(null); setError('');
   };
 
+  const cancelAnswer = () => activeController.current?.abort('user');
   return { api, messages, draft, setDraft, job, error, busy, creating, start, send, reset,
+    canCancel: creating && !!activeController.current, cancelAnswer,
     lookupPrompt, promptLookup, cancelLookup, applyLookupFilters, searchComplaints,
     toolsOpen, toolRequest, toolContext, openTool, closeTools, toggleTools, reopenTool, setToolContext, notifyToolChanged,
     agentMode, setAgentMode };
@@ -388,6 +414,7 @@ export default function AIRecommendations({ recommendation, api = recommendation
       
       {/* 우측 상단 모드 스위치 및 옵션 메뉴 */}
       <div className="ai-chat-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        {recommendation.canCancel && <button className="danger" onClick={recommendation.cancelAnswer}>답변 요청 취소</button>}
         <div className="agent-mode-switch" style={{ display: 'flex', alignItems: 'center', background: '#f1f3f5', padding: '3px 6px', borderRadius: '6px' }}>
           <button 
             onClick={() => setAgentMode(0)} 

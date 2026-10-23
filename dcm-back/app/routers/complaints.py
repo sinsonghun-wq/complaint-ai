@@ -612,7 +612,7 @@ def react_app(path: str, request: Request):
     raise HTTPException(404, "React 빌드 결과가 없습니다. frontend에서 npm run build를 실행하세요.")
 
 @router.post("/chat", response_model=ChatResponseBody)
-async def chatAI(chatBody: ChatRequestBody, actor: Annotated[dict, Depends(actor_from_auth)]):
+async def chatAI(chatBody: ChatRequestBody, request: Request, actor: Annotated[dict, Depends(actor_from_auth)]):
     user_id = actor["owner_id"]
     
     # 내용 필터링
@@ -621,8 +621,17 @@ async def chatAI(chatBody: ChatRequestBody, actor: Annotated[dict, Depends(actor
     logger.info(chatBody.content)
     
     # 큐에 요청을 넣고 워커가 처리 완료하여 Future에 결과를 담을 때까지 비동기 대기
-    result = await enqueue_chat_request(user_id, chatBody)
-    return result
+    task = asyncio.create_task(enqueue_chat_request(user_id, chatBody))
+    try:
+        while not task.done():
+            done, _ = await asyncio.wait({task}, timeout=0.5)
+            if done: break
+            if await request.is_disconnected():
+                raise HTTPException(499, '답변 요청이 취소되었습니다.')
+        return await task
+    finally:
+        if not task.done(): task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 

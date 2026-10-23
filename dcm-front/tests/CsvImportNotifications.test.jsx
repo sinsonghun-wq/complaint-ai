@@ -20,8 +20,9 @@ it.each([0, 2])('shows completed unreadable count only when positive: %s', async
     throw new Error(`Unexpected API: ${path}`);
   }));
   const { container } = render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: '파일 자료 관리', exact: true }));
   fireEvent.change(container.querySelector('input[type="file"]'), { target: { files: [new File(['제목,본문\n제목,내용'], 'sample.csv', { type: 'text/csv' })] } });
-  fireEvent.click(screen.getByRole('button', { name: '파일 일괄 처리' }));
+  fireEvent.click(screen.getByRole('button', { name: '외부 민원 저장 시작' }));
   await waitFor(() => expect(intervals.mock.calls.some((call) => call[1] === 1000)).toBe(true));
   const poll = intervals.mock.calls.find((call) => call[1] === 1000)[0];
   await act(async () => { await poll(); });
@@ -29,7 +30,7 @@ it.each([0, 2])('shows completed unreadable count only when positive: %s', async
   expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('100');
   if (unreadable) {
     expect(screen.getAllByText(/읽을 수 없는 CSV 항목 2건은 제외했습니다/)).toHaveLength(2);
-    fireEvent.click(screen.getByRole('button', { name: '새 민원', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: '파일 자료 관리', exact: true }));
     expect(screen.getByRole('status').textContent).toContain('읽을 수 없는 CSV 항목 2건은 제외했습니다');
   } else {
     expect(screen.queryByText(/읽을 수 없는/)).toBeNull();

@@ -30,7 +30,8 @@ export default function App() {
     let response;
     try {
       response = await fetch(`${server.replace(/\/$/, "")}${path}`, { ...options, headers: { ...headers, ...options.headers } });
-    } catch {
+    } catch (failure) {
+      if (options.signal?.aborted) throw failure;
       throw new Error("처리 서버에 연결할 수 없습니다. 서버 실행 상태와 처리 서버 주소를 확인해 주세요.");
     }
     const raw = await response.text();
@@ -104,7 +105,7 @@ function Workspace({ auth, api, signout, server }) {
   const recommendation = useRecommendations(api);
   const ragImporter = useRagImport(api, isAdmin);
   const [selectingForAI, setSelectingForAI] = useState(false);
-  const [view, setView] = useState(isAdmin ? "upload" : "write");
+  const [view, setView] = useState(isAdmin ? "categories" : "ai-recommendations");
   const [message, setMessage] = useState("");
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -409,13 +410,16 @@ function Workspace({ auth, api, signout, server }) {
       setSelected(null); setMessage(`${departmentName(department_id)} 부서로 전달했습니다.`); await refresh(); navigate("categories", true);
     } catch (error) { setMessage(error.message); } finally { setActionBusy(false); }
   };
-  const navItems = isAdmin ? [["upload", "새 민원"], ["categories", "분류 목록"], ["deleted", "삭제된 데이터"], ["intake", "민원 접수"]] : [["write", "새 민원"], ["submitted", "작성한 민원"], ["ai-recommendations", "AI 추천 답변"]];
-  const pageTitle = { write: "새 민원 작성", submitted: "작성한 민원", "ai-recommendations": "AI 추천 답변", upload: "파일에서 일괄 가져오기", categories: "분류 목록", deleted: "삭제된 데이터", intake: "민원 접수" }[view];
+  const navItems = isAdmin
+    ? [["categories", "분류 목록 · 민원 접수"], ["upload", "파일 자료 관리"], ["deleted", "삭제된 데이터"]]
+    : [["ai-recommendations", "AI 추천 답변"], ["write", "새 민원"], ["submitted", "작성한 민원"]];
+  const activeNavView = isAdmin && view === "intake" ? "categories" : view;
+  const pageTitle = { write: "새 민원 작성", submitted: "작성한 민원", "ai-recommendations": "AI 추천 답변", upload: "파일 자료 관리", categories: "분류 목록 · 민원 접수", deleted: "삭제된 데이터", intake: "민원 접수" }[view];
   const adminCategories = departmentCatalog;
   const canManageCategory = isAdmin && ownDepartmentId != null && active === ownDepartmentId;
   return <div className="app">
     <aside inert={archiveTarget ? true : undefined}><div className="brand"><b>C</b><strong>ComplaintAI</strong></div><p className="navlabel">민원 업무</p>
-      {navItems.map(([id, label]) => <button key={id} className={view === id ? "active" : ""} onClick={() => navigate(id)}>{label}</button>)}
+      {navItems.map(([id, label]) => <button key={id} className={activeNavView === id ? "active" : ""} aria-current={activeNavView === id ? "page" : undefined} onClick={() => navigate(id)}>{label}</button>)}
       <div className="sidebar-bottom">
         {isAdmin && importProgress && <ImportProgress progress={importProgress} />}
         {isAdmin && <RagImportProgress importer={ragImporter} />}
@@ -425,14 +429,14 @@ function Workspace({ auth, api, signout, server }) {
     <main inert={archiveTarget ? true : undefined}><header><div><span>{isAdmin ? "부서 민원 관리" : "민원인 업무"}</span><h1>{pageTitle}</h1></div></header>
       {message && <p className="notice">{message}</p>}
       {view === "write" && <section className="panel compose"><h2>{editing ? "민원 수정" : followUp ? "완료 민원에 재민원 작성" : "민원 내용을 입력하세요"}</h2>{followUp && <PreviousContext context={{ title: followUp.title, content: followUp.content, response: followUp.latest_response, previous_context: followUp.previous_context }} />}<label>민원 제목<input value={title} onChange={(e) => { setTitle(e.target.value); setAnalysis(null); }} /></label><label>민원 원문<textarea value={content} onChange={(e) => { setContent(e.target.value); setAnalysis(null); }} placeholder="민원 내용을 가능한 구체적으로 작성해 주세요." /></label><div className="actions compose-actions"><button className="primary" disabled={actionBusy} onClick={summarize}>{actionBusy ? "접수 중..." : editing ? "수정 완료" : followUp ? "재민원 접수" : "작성완료"}</button>{(editing || followUp) && <button onClick={() => { setEditing(null); setFollowUp(null); setTitle(""); setContent(""); setAnalysis(null); }}>작성 취소</button>}</div></section>}
-      {view === "upload" && <><section className="panel compose">
-        <h2>파일에서 일괄 가져오기</h2>
-        <p className="muted">각 행은 독립적인 민원으로 요약·분류되며, 담당 부서의 분류 목록에 저장됩니다.</p>
-        <label className="upload">파일 선택
+      {view === "upload" && <><section className="panel compose" aria-labelledby="external-import-title">
+        <h2 id="external-import-title">외부 민원 저장</h2>
+        <p className="muted">외부에서 받은 민원 파일을 요약·분류해 담당 부서의 분류 목록에 저장합니다. CSV·엑셀의 각 행은 개별 민원으로 처리됩니다.</p>
+        <label className="upload">민원 파일 선택
           <input type="file" accept=".hwp,.pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls,.csv" disabled={isUploading} onChange={(e) => setFile(e.target.files?.[0])} />
           <small>{file?.name || "HWP, PDF, 이미지, XLSX, XLS, CSV"}</small>
         </label>
-        <button className="primary" disabled={isUploading} onClick={upload}>{isUploading ? "처리 중..." : "파일 일괄 처리"}</button>
+        <button className="primary" disabled={isUploading} onClick={upload}>{isUploading ? "처리 중..." : "외부 민원 저장 시작"}</button>
         {job && <p className="muted">작업 ID: {job.id || job.job_id} · 상태: {job.status} {job.status === "failed" && <button onClick={() => retryCsvImport()}>재처리</button>}</p>}
         {csvMapping && <article className="analysis csv-mapping">
           <h3>CSV 열 매핑 확인</h3><p className="muted">자동 판단 결과를 확인하세요. 선택한 구성은 같은 헤더의 CSV에 자동 적용됩니다.</p>

@@ -60,7 +60,7 @@ function setup({ allFiles = false, empty = false } = {}) {
 
 async function openList() {
   render(<App />);
-  fireEvent.click(screen.getByRole('button', { name: '분류 목록', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: '분류 목록 · 민원 접수', exact: true }));
   await screen.findByRole('button', { name: /12교통·국토/ });
 }
 function openWarning() {
@@ -104,7 +104,7 @@ describe('부서 민원 전체 삭제', () => {
     expect(screen.getByRole('button', { name: /12교통·국토/ })).toBeTruthy();
     fireEvent.click(screen.getAllByText('원본 내용 확인')[0]);
     await screen.findByText(`삭제 사유: ${defaultReason}`);
-    fireEvent.click(screen.getByRole('button', { name: '분류 목록', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: '분류 목록 · 민원 접수', exact: true }));
     await screen.findByText('표시할 민원이 없습니다.');
     expect(screen.queryByText('민원 1')).toBeNull();
   });
@@ -200,7 +200,7 @@ describe('부서 민원 전체 삭제', () => {
   it('disables the action when the entire department has no complaints', async () => {
     setup({ empty: true });
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '분류 목록', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: '분류 목록 · 민원 접수', exact: true }));
     await screen.findByRole('button', { name: /0교통·국토/ });
     await waitFor(() => expect(screen.getByRole('button', { name: buttonName }).disabled).toBe(true));
   });

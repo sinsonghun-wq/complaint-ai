@@ -36,7 +36,7 @@ function setup(departmentId, catalog = departments) {
 describe('부서 ID 기반 화면 권한', () => {
   it.each(departments)('$id $name: own department editable, others read-only', async (department) => {
     setup(department.id); render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '분류 목록', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: '분류 목록 · 민원 접수', exact: true }));
     const own = await screen.findByRole('button', { name: new RegExp(department.name) });
     expect(own.className).toContain('department-owned');
     expect((await screen.findByText('민원 ' + department.id)).closest('article').querySelector('.record-actions button')).toBeTruthy();
@@ -57,7 +57,7 @@ describe('부서 ID 기반 화면 권한', () => {
   it('loads displayed names from the server catalog and transfers numeric IDs', async () => {
     const catalog = departments.map((d) => ({ ...d, name: d.id === 4 ? 'DB 환경 부서명' : d.name }));
     const calls = setup(2, catalog); render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '분류 목록', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: '분류 목록 · 민원 접수', exact: true }));
     expect(await screen.findByRole('button', { name: /DB 환경 부서명/ })).toBeTruthy();
     const article = (await screen.findByText('민원 2')).closest('article');
     fireEvent.click(within(article).getByRole('button', { name: '민원 접수' }));

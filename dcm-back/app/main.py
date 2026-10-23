@@ -77,3 +77,9 @@ def health():
 @app.get("/health/database")
 def health_database():
     return {"status": "ok", "database": "connected", "pgvector": bool(fetch_one("SELECT 1 FROM pg_extension WHERE extname='vector'"))}
+
+
+@app.get('/health/chat')
+def health_chat():
+    from .agent import chat_status
+    return chat_status()

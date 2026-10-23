@@ -30,6 +30,7 @@ def ensure_rag_import_schema():
     with connection() as db:
         db.execute(migration.read_text(encoding="utf-8"))
         db.execute((migration.parent / '20261021_department_document_chunks.sql').read_text(encoding='utf-8'))
+        db.execute((migration.parent / '20261023_rag_reference_lookup.sql').read_text(encoding='utf-8'))
 
 
 def reference_mapping(headers):

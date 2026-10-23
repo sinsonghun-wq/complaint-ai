@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import AIRecommendations, { useRecommendations } from '../src/AIRecommendations.jsx';
+import AIRecommendations, { requestChat, useRecommendations } from '../src/AIRecommendations.jsx';
 
 afterEach(cleanup);
 function Harness({ api }) {
@@ -44,5 +44,45 @@ describe('doc-main의 기존 AI 채팅 계약 유지', () => {
     await screen.findByText('연결 확인용 오류');
     fireEvent.click(screen.getByRole('button', { name: '다시 시도' }));
     await waitFor(() => expect(screen.getByText('다시 연결됐습니다.')).toBeTruthy());
+  });
+
+  it('stops a hung request at the deadline even when the network promise never resolves', async () => {
+    const controller = new AbortController();
+    const api = vi.fn(() => new Promise(() => {}));
+    await expect(requestChat(api, { content: '질문', agent_mode: 1 }, controller, 5)).rejects.toThrow('대기 시간이 초과');
+    expect(controller.signal.aborted).toBe(true);
+  });
+
+  it('keeps a request open past the old deadline and allows the backend twenty minutes', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const pending = requestChat(() => new Promise(() => {}), { content: '질문', agent_mode: 1 }, controller);
+      const timeout = expect(pending).rejects.toThrow('대기 시간이 초과');
+      await vi.advanceTimersByTimeAsync(190000);
+      expect(controller.signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1010000);
+      expect(controller.signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(10000);
+      await timeout;
+      expect(controller.signal.reason).toBe('timeout');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lets the user cancel loading and ignores an old reply after retry', async () => {
+    let finish;
+    const api = vi.fn().mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+      .mockResolvedValue({ code: 0, message: '새 답변', result: [] });
+    render(<Harness api={api} />);
+    send('오래 걸리는 질문');
+    fireEvent.click(await screen.findByRole('button', { name: '답변 요청 취소' }));
+    await screen.findByText('답변 요청을 취소했습니다.');
+    expect(screen.getByLabelText('메시지').disabled).toBe(false);
+    send('다음 질문');
+    await screen.findByText('새 답변');
+    finish({ code: 0, message: '늦게 도착한 답변', result: [] });
+    await waitFor(() => expect(screen.queryByText('늦게 도착한 답변')).toBeNull());
   });
 });

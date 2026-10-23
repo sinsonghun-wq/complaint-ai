@@ -135,8 +135,8 @@ export function RagImportPanel({ importer, departments, ownDepartmentId }) {
   useEffect(() => { setDepartment(ownDepartmentId || 7); }, [ownDepartmentId]);
   return <section className="panel compose rag-import-panel" aria-labelledby="rag-import-title">
     <h2 id="rag-import-title">RAG용 데이터 삽입</h2>
-    <p className="muted">법률·규칙·명확한 사례를 AI 민원 답변의 참고 자료로 저장합니다. 본문이 완전히 같은 자료는 건너뜁니다.</p>
-    <p className="muted">CSV의 ‘제목·본문’ 또는 ‘title·content’ 열을 사용하세요. 사례는 ‘질문·답변’ 열도 지원합니다. 본문은 그대로 보존하고 현재 임베딩 모델로 검색 벡터를 생성합니다.</p>
+    <p className="muted">법률·규칙·사례를 AI 추천 답변의 근거 자료로 저장합니다. 본문이 완전히 같은 자료는 건너뜁니다.</p>
+    <p className="muted">CSV의 ‘제목·본문’ 또는 ‘title·content’ 열을 사용하세요. 사례는 ‘질문·답변’ 열도 지원합니다. 원문을 보존하고 질문과 관련된 자료를 찾아 답변에 활용합니다.</p>
     {importer.message && <p className="notice" role={importer.job?.status === "failed" ? "alert" : "status"}>{importer.message}</p>}
     <RagImportFailures importer={importer} />
     <label>자료 부서<select disabled={importer.busy} value={department} onChange={(event) => setDepartment(Number(event.target.value))}>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
