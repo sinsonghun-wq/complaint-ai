@@ -25,7 +25,7 @@ const connectionError = (status) => [502, 503].includes(status)
 export default function App() {
   const [auth, setAuth] = useState(() => JSON.parse(sessionStorage.getItem(key) || "null"));
   const server = "http://localhost:8000";
-  const headers = useMemo(() => auth?.token ? { Authorization: `Bearer ${auth.token}` } : {}, [auth]);
+  const headers = useMemo(() => auth?.token ? { Authorization: `Bearer ${auth.token}` } : {}, [auth?.token]);
   const api = useCallback(async (path, options = {}) => {
     let response;
     try {
@@ -49,13 +49,25 @@ export default function App() {
   useEffect(() => {
     if (!auth?.token) return;
     let stopped = false;
-    api("/api/auth/context").then((data) => {
-      if (!stopped && data.user && JSON.stringify(data.user) !== JSON.stringify(auth.user)) {
-        const refreshed = { token: auth.token, user: data.user };
-        sessionStorage.setItem(key, JSON.stringify(refreshed)); setAuth(refreshed);
-      }
-    }).catch(() => {});
-    return () => { stopped = true; };
+    let pending = false;
+    const controller = new AbortController();
+    const refreshAccount = async () => {
+      if (pending || stopped) return;
+      pending = true;
+      try {
+        const data = await api("/api/auth/context", { signal: controller.signal });
+        if (!stopped && data.user) setAuth((current) => {
+          if (current?.token !== auth.token || JSON.stringify(data.user) === JSON.stringify(current.user)) return current;
+          const refreshed = { token: current.token, user: data.user };
+          sessionStorage.setItem(key, JSON.stringify(refreshed));
+          return refreshed;
+        });
+      } catch {} finally { pending = false; }
+    };
+    refreshAccount();
+    const timer = window.setInterval(refreshAccount, 5000);
+    window.addEventListener("focus", refreshAccount);
+    return () => { stopped = true; controller.abort(); window.clearInterval(timer); window.removeEventListener("focus", refreshAccount); };
   }, [api, auth?.token]);
   const saveAuth = (data) => { sessionStorage.setItem(key, JSON.stringify(data)); setAuth(data); };
   if (!auth) return <LoginScreen api={api} saveAuth={saveAuth} server={server}/>;
@@ -97,10 +109,21 @@ function Workspace({ auth, api, signout, server }) {
   const departmentName = (id) => departmentCatalog.find((department) => department.id === id)?.name || "부서 미지정";
   useEffect(() => {
     let stopped = false;
-    api("/api/departments").then((data) => {
-      if (!stopped && Array.isArray(data.departments)) setDepartmentCatalog(data.departments);
-    }).catch(() => {});
-    return () => { stopped = true; };
+    let pending = false;
+    const controller = new AbortController();
+    const refreshDepartments = async () => {
+      if (pending || stopped) return;
+      pending = true;
+      try {
+        const data = await api("/api/departments", { signal: controller.signal });
+        if (!stopped && Array.isArray(data.departments)) setDepartmentCatalog((current) =>
+          JSON.stringify(current) === JSON.stringify(data.departments) ? current : data.departments);
+      } catch {} finally { pending = false; }
+    };
+    refreshDepartments();
+    const timer = window.setInterval(refreshDepartments, 5000);
+    window.addEventListener("focus", refreshDepartments);
+    return () => { stopped = true; controller.abort(); window.clearInterval(timer); window.removeEventListener("focus", refreshDepartments); };
   }, [api]);
   const recommendation = useRecommendations(api);
   const ragImporter = useRagImport(api, isAdmin);
@@ -299,14 +322,20 @@ function Workspace({ auth, api, signout, server }) {
     window.clearInterval(importTimer.current);
     const timer = window.setInterval(async () => {
       try {
-        const state = await api(`/api/imports/${jobId}`); setJob(state);
-        setImportProgress((current) => ({ ...current, status: state.status, completed: state.completed_rows || 0, total: state.total_rows || 0, unreadable: state.unreadable_rows || 0 }));
+        const state = await api(`/api/imports/${jobId}`);
+        if (importTimer.current !== timer) return;
+        setJob(state);
+        setImportProgress((current) => current ? ({ ...current, status: state.status, completed: state.completed_rows || 0, total: state.total_rows || 0, unreadable: state.unreadable_rows || 0 }) : current);
         if (state.status === "completed") {
-          window.clearInterval(timer); setIsUploading(false); await refresh(); setMessage(csvCompletionMessage(state)); navigate("categories", true);
+          window.clearInterval(timer); importTimer.current = null; setIsUploading(false); await refresh(); setMessage(csvCompletionMessage(state)); navigate("categories", true);
         } else if (state.status === "failed") {
-          window.clearInterval(timer); setIsUploading(false); setMessage(`파일 처리에 실패했습니다. ${state.last_error || "실패 행 목록을 확인해 주세요."}`);
+          window.clearInterval(timer); importTimer.current = null; setIsUploading(false); setMessage(`파일 처리에 실패했습니다. ${state.last_error || "실패 행 목록을 확인해 주세요."}`);
         }
-      } catch (error) { window.clearInterval(timer); setIsUploading(false); setImportProgress((current) => ({ ...current, status: "connection_error" })); setMessage(error.message); }
+      } catch (error) {
+        if (importTimer.current !== timer) return;
+        window.clearInterval(timer); importTimer.current = null; setIsUploading(false);
+        setImportProgress((current) => current ? ({ ...current, status: "connection_error" }) : current); setMessage(error.message);
+      }
     }, 1000);
     importTimer.current = timer;
   };
@@ -421,7 +450,7 @@ function Workspace({ auth, api, signout, server }) {
     <aside inert={archiveTarget ? true : undefined}><div className="brand"><b>C</b><strong>ComplaintAI</strong></div><p className="navlabel">민원 업무</p>
       {navItems.map(([id, label]) => <button key={id} className={activeNavView === id ? "active" : ""} aria-current={activeNavView === id ? "page" : undefined} onClick={() => navigate(id)}>{label}</button>)}
       <div className="sidebar-bottom">
-        {isAdmin && importProgress && <ImportProgress progress={importProgress} />}
+        {isAdmin && importProgress && <ImportProgress progress={importProgress} onDismiss={() => setImportProgress((current) => current?.status === "completed" ? null : current)} />}
         {isAdmin && <RagImportProgress importer={ragImporter} />}
         <div className="account"><p className="navlabel">계정</p><small>{auth.user.name} · {isAdmin ? `${auth.user.department_name || departmentName(ownDepartmentId)} 관리자` : "민원인"}</small><button onClick={signout}>로그아웃</button><em>개인정보는 요약 결과에 노출되지 않도록 제외해 처리합니다.</em></div>
       </div>
@@ -479,11 +508,11 @@ function Workspace({ auth, api, signout, server }) {
   </div>;
 }
 
-function ImportProgress({ progress }) {
+function ImportProgress({ progress, onDismiss }) {
   const percentage = importPercentage(progress);
   const status = { preparing: "파일 준비", queued: "대기 중", processing: "처리 중", running: "처리 중", awaiting_mapping: "열 매핑 확인 필요", completed: "처리 완료", failed: "처리 실패", connection_error: "연결 확인 필요" }[progress.status] || "처리 중";
   return <section className={`import-progress${progress.status === "completed" ? " completed" : ""}`} aria-label="파일 처리 진행률">
-    <div className="import-progress-heading"><span>{status}</span><strong>{percentage}%</strong></div>
+    <div className="import-progress-heading">{progress.status === "completed" && percentage === 100 ? <button type="button" className="import-progress-dismiss" aria-label="민원 파일 처리 완료 표시 닫기" title="완료된 진행도 표시 닫기" onClick={onDismiss}>처리 완료</button> : <span>{status}</span>}<strong>{percentage}%</strong></div>
     <div className="import-progress-track" role="progressbar" aria-label="민원 파일 처리" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percentage} aria-valuetext={`${status}, ${percentage}%`}><div className="import-progress-fill" style={{ width: `${percentage}%` }} /></div>
     <small className="import-progress-file" title={progress.name}>{progress.name}</small>
     <small>{progress.total > 0 ? `${(progress.completed || 0).toLocaleString()} / ${progress.total.toLocaleString()}건` : "전체 건수 확인 중"}</small>

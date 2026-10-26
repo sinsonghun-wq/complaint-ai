@@ -60,3 +60,11 @@ def ensure_intake_departments():
             if department:
                 conn.execute("UPDATE complaints SET department_id=%s WHERE department_id IS NULL AND category=%s",
                              (department["id"], row["category"]))
+
+
+def ensure_admin_department_identity():
+    """Restore legacy assignments and keep administrator names tied to DB IDs."""
+    from .db import connection
+    migration = Path(__file__).resolve().parents[2] / "database/migrations/20261026_admin_department_sync.sql"
+    with connection() as conn:
+        conn.execute(migration.read_text(encoding="utf-8"))

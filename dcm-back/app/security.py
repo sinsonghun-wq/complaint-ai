@@ -77,4 +77,7 @@ def current_account(actor: dict[str, Any]) -> dict[str, Any]:
 
 
 def public_user(user: dict[str, Any]) -> dict[str, Any]:
-    return {"id": str(user["id"]), "owner_id": str(user["owner_id"]), "username": user["username"], "name": user.get("display_name") or user["username"], "role": user["account_role"], "department_id": user.get("department_id"), "department_name": user.get("department_name"), "can_run_global_cleanup": False}
+    name = user.get("display_name") or user["username"]
+    if user["account_role"] == "admin" and user.get("department_name"):
+        name = f"{user['department_name']} 관리자"
+    return {"id": str(user["id"]), "owner_id": str(user["owner_id"]), "username": user["username"], "name": name, "role": user["account_role"], "department_id": user.get("department_id"), "department_name": user.get("department_name"), "can_run_global_cleanup": False}

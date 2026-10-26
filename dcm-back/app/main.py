@@ -8,7 +8,7 @@ from fastapi.security import APIKeyHeader
 
 from app.agent import lifespan as agent_lifespan
 from .dedup import ensure_dedup_schema
-from .departments import ensure_intake_departments
+from .departments import ensure_admin_department_identity, ensure_intake_departments
 from .services.trash import ensure_trash_schema
 from .services.rag_imports import ensure_rag_import_schema
 from .db import connection, fetch_all, fetch_one
@@ -20,6 +20,7 @@ auth_header = APIKeyHeader(name="Authorization", auto_error=False)
 
 @asynccontextmanager
 async def application_lifespan(app):
+    await asyncio.to_thread(ensure_admin_department_identity)
     await asyncio.to_thread(ensure_trash_schema)
     await asyncio.to_thread(ensure_dedup_schema)
     await asyncio.to_thread(ensure_intake_departments)

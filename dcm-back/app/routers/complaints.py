@@ -140,7 +140,7 @@ def complaints(request: Request, deleted: bool = False, category: str | None = N
         filter_sql, filter_args = filter_clause(request.query_params.getlist("departments"), statuses[0] if statuses else "")
     params: list[Any] = [*scope, department_id, department_id, *filter_args, limit, offset]
     response_filter = "" if actor["role"] == "admin" else " AND r.response_state='sent'"
-    sql = f"""SELECT id,title,content,summary,category,department_id,category AS department_name,analysis_state,complaint_status,source_file,source_row,processing_mode,llm_model,embedding_model,created_at,deleted_at,cancelled_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
+    sql = f"""SELECT id,title,content,summary,category,department_id,COALESCE((SELECT d.name FROM departments d WHERE d.id=complaints.department_id),category) AS department_name,analysis_state,complaint_status,source_file,source_row,processing_mode,llm_model,embedding_model,created_at,deleted_at,cancelled_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
         (NULLIF(BTRIM(source_file), '') IS NULL) AS submitted_by_user,
         COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response,
         COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response_state
@@ -160,7 +160,7 @@ def complaint_detail(complaint_id: int, actor: Annotated[dict, Depends(actor_fro
     # 목록과 같은 접근 범위; 관리자는 다른 부서 원문을 읽을 수 있다.
     clause, args = ("", []) if actor["role"] == "admin" else (" AND owner_user_id=%s", [actor["owner_id"]])
     response_filter = "" if actor["role"] == "admin" else " AND r.response_state='sent'"
-    row = fetch_one(f"""SELECT id,title,content,summary,category,department_id,category AS department_name,analysis_state,complaint_status,created_at,deleted_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
+    row = fetch_one(f"""SELECT id,title,content,summary,category,department_id,COALESCE((SELECT d.name FROM departments d WHERE d.id=complaints.department_id),category) AS department_name,analysis_state,complaint_status,created_at,deleted_at,cancelled_by_role,cancellation_reason,parent_complaint_id,previous_context,
         (NULLIF(BTRIM(source_file), '') IS NULL) submitted_by_user,
         COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1),'') latest_response,
         COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id{response_filter} ORDER BY r.created_at DESC LIMIT 1),'') latest_response_state
@@ -492,7 +492,7 @@ def department_complaint(complaint_id: int, actor: dict) -> dict:
 @router.get("/department/complaints")
 def department_complaints(status: str = "", actor: dict = Depends(actor_from_auth)):
     identifier = require_department_id(actor)
-    rows = fetch_all("""SELECT id,title,content,summary,category,department_id,category AS department_name,complaint_status,status_updated_at,created_at,(NULLIF(BTRIM(source_file), '') IS NULL) submitted_by_user,
+    rows = fetch_all("""SELECT id,title,content,summary,category,department_id,COALESCE((SELECT d.name FROM departments d WHERE d.id=complaints.department_id),category) AS department_name,complaint_status,status_updated_at,created_at,(NULLIF(BTRIM(source_file), '') IS NULL) submitted_by_user,
         COALESCE((SELECT content FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response,
         COALESCE((SELECT response_state FROM complaint_responses r WHERE r.complaint_id=complaints.id ORDER BY r.created_at DESC LIMIT 1), '') AS latest_response_state
         FROM complaints WHERE deleted_at IS NULL AND department_id=%s AND (%s='' OR complaint_status=%s) ORDER BY created_at DESC LIMIT 200""", (identifier, status, status))

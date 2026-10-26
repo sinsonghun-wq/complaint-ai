@@ -199,6 +199,24 @@ aside button.active {
   transition: width 0.3s ease;
 }
 .import-progress small { color: #b0c3df; font-size: 11px; }
+aside .import-progress .import-progress-dismiss {
+  width: max-content;
+  max-width: 100%;
+  min-height: 0;
+  padding: 1px 4px;
+  margin: -1px -4px;
+  border: 0;
+  border-radius: 3px;
+  justify-self: start;
+  align-self: center;
+  background: #1c3153;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+aside .rag-progress .import-progress-dismiss { color: #b0c3df; font-size: 11px; }
+aside .import-progress .import-progress-dismiss:hover { background: #29436f; color: #fff; }
+aside .import-progress .import-progress-dismiss:focus-visible { outline: 2px solid #88d8ff; outline-offset: 2px; }
 .import-progress.completed .import-progress-fill { background: #4ade80; }
 .import-progress.completed .import-progress-heading strong { color: #4ade80; }
 .import-progress-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

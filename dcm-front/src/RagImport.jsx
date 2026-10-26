@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import "./ragImport.css";
 
 const running = (job) => ["queued", "processing"].includes(job?.status);
+const dismissedProgressKey = "complaintai.rag.progress.dismissed";
 const terminalMessage = (job) => job.status === "cancelled"
   ? "해당 작업이 취소되었습니다. 이미 저장된 데이터는 유지됩니다."
   : job.status === "failed" ? `RAG 자료 처리에 실패했습니다. ${job.last_error || "임베딩 서버 상태를 확인해 주세요."}`
@@ -150,13 +151,24 @@ export function RagImportPanel({ importer, departments, ownDepartmentId }) {
 
 export function RagImportProgress({ importer }) {
   const { job, uploading, cancelling, cancel } = importer;
-  if (!job && !uploading) return null;
+  const [dismissedCompletion, setDismissedCompletion] = useState(() => sessionStorage.getItem(dismissedProgressKey));
+  const completion = job?.status === "completed" ? JSON.stringify([job.id, job.finished_at || null]) : null;
+  useEffect(() => {
+    if (uploading || running(job)) {
+      setDismissedCompletion(null); sessionStorage.removeItem(dismissedProgressKey);
+    }
+  }, [uploading, job?.id, job?.status]);
+  if ((!job && !uploading) || (!uploading && completion && completion === dismissedCompletion)) return null;
+  const dismiss = () => {
+    if (!completion || uploading) return;
+    sessionStorage.setItem(dismissedProgressKey, completion); setDismissedCompletion(completion);
+  };
   const completed = job?.completed_rows || 0, total = job?.total_rows || 0;
   const percentage = job?.status === "completed" ? 100 : total ? Math.min(99, Math.floor(completed / total * 100)) : 0;
   const status = uploading ? "파일 업로드 중" : job?.stage === "counting" ? "전체 건수 확인 중" : job?.stage === "chunking" && running(job) ? (job.status === "queued" ? "긴 원문 후순위 대기" : "긴 원문 조각 처리 중") : ({ queued: "대기 중", processing: "임베딩·저장 중", completed: "처리 완료", cancelled: "작업 취소됨", failed: "처리 실패" }[job?.status] || "준비 중");
   return <section className={`import-progress rag-progress ${job?.status || ""}`} aria-label="RAG 파일 처리 진행률">
     <div className="import-progress-heading"><span>RAG 파일 처리</span><strong>{percentage}%</strong></div>
-    <small>{status}</small>
+    {job?.status === "completed" && !uploading && percentage === 100 ? <button type="button" className="import-progress-dismiss" aria-label="RAG 파일 처리 완료 표시 닫기" title="완료된 진행도 표시 닫기" onClick={dismiss}>처리 완료</button> : <small>{status}</small>}
     <div className="import-progress-track" role="progressbar" aria-label="RAG 파일 처리" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percentage}><div className="import-progress-fill" style={{ width: `${percentage}%` }} /></div>
     <small className="import-progress-file" title={job?.source_file}>{job?.source_file || "CSV 업로드"}</small>
     <small>{completed.toLocaleString()} / {total ? `${total.toLocaleString()}건 확정 처리` : "전체 건수 확인 중"}</small>

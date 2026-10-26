@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import App from '../src/App.jsx';
 import departments from '../src/adminDepartments.json';
 
-afterEach(() => { cleanup(); sessionStorage.clear(); localStorage.clear(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); sessionStorage.clear(); localStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const response = (body, status = 200) => new Response(JSON.stringify(body), { status });
 
 function setup(departmentId, catalog = departments) {
@@ -13,7 +13,7 @@ function setup(departmentId, catalog = departments) {
   const record = (id) => ({
     id: id * 10, department_id: id, department_name: catalog.find((d) => d.id === id).name,
     category: departments.find((d) => d.id === id).name, title: '민원 ' + id, content: '민원 원문',
-    summary: '요약', complaint_status: '접수', can_manage: id === departmentId,
+    summary: '요약', complaint_status: '접수', can_manage: id === user.department_id,
     submitted_by_user: true, created_at: '2026-10-16', latest_response: '', latest_response_state: '',
   });
   vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
@@ -30,10 +30,44 @@ function setup(departmentId, catalog = departments) {
     if (path.endsWith('/responses')) return response({ complaint_status: '진행중', response: { content: JSON.parse(options.body).content } });
     return response({ complaint: record(departmentId) });
   }));
+  calls.user = user;
   return calls;
 }
 
 describe('부서 ID 기반 화면 권한', () => {
+  it('refreshes administrator and catalog names without logging in again or changing numeric ownership', async () => {
+    const intervals = vi.spyOn(window, 'setInterval');
+    const catalog = departments.map((department) => ({ ...department }));
+    const calls = setup(2, catalog); render(<App />);
+    await screen.findByText('민원 2');
+    catalog.find((department) => department.id === 2).name = '변경된 교통 부서';
+    calls.user.name = '변경된 교통 부서 관리자';
+    calls.user.department_name = '변경된 교통 부서';
+    await act(async () => {
+      await Promise.all(intervals.mock.calls.filter((call) => call[1] === 5000).map(([poll]) => poll()));
+    });
+    const owned = await screen.findByRole('button', { name: /변경된 교통 부서/ });
+    expect(owned.className).toContain('department-owned');
+    expect(await screen.findByText('변경된 교통 부서 관리자 · 변경된 교통 부서 관리자')).toBeTruthy();
+    expect(JSON.parse(sessionStorage.getItem('complaintai.fastapi.auth')).user.department_id).toBe(2);
+    const article = (await screen.findByText('민원 2')).closest('article');
+    fireEvent.click(within(article).getByRole('button', { name: '민원 접수' }));
+    expect(await screen.findByLabelText('답변 내용')).toBeTruthy();
+  });
+
+  it('refreshes reassigned department permissions for the same login token', async () => {
+    const calls = setup(2); render(<App />);
+    await screen.findByText('민원 2');
+    calls.user.department_id = 4;
+    calls.user.department_name = '환경·위생';
+    calls.user.name = '환경·위생 관리자';
+    fireEvent.focus(window);
+    const article = (await screen.findByText('민원 4')).closest('article');
+    expect(within(article).getByRole('button', { name: '민원 접수' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /교통·국토/ }));
+    expect(within((await screen.findByText('민원 2')).closest('article')).getByText('읽기 전용')).toBeTruthy();
+  });
+
   it.each(departments)('$id $name: own department editable, others read-only', async (department) => {
     setup(department.id); render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '분류 목록 · 민원 접수', exact: true }));
