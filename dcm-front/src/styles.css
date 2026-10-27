@@ -10,6 +10,36 @@
 .ai-chat-tool-slot[hidden] { display: none; }
 .ai-chat-workbench > .ai-chat { min-width: 0; }
 .ai-chat-header-actions { display: flex; align-items: center; gap: 9px; flex: none; }
+.ai-chat-header-actions > button.danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid #e6c7cc;
+  border-radius: 9px;
+  background: #fffafb;
+  color: #a54150;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color .15s, border-color .15s, color .15s;
+}
+.ai-chat-header-actions > button.danger::before {
+  content: "";
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m4 4 8 8M4 12l8-8' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.ai-chat-header-actions > button.danger:hover:not(:disabled) { background: #fff0f2; border-color: #d8a0aa; color: #923647; }
+.ai-chat-header-actions > button.danger:active:not(:disabled) { background: #fbe4e9; }
+.ai-chat-header-actions > button.danger:focus-visible { outline: 2px solid #c96b7a; outline-offset: 2px; }
 .ai-tools-toggle { border: 1px solid #cddaf0; border-radius: 9px; padding: 9px 11px; color: #405d99; background: #f8faff; font: inherit; font-size: 12px; cursor: pointer; }
 .ai-tools-toggle.active { background: #edf2ff; border-color: #9eb6e6; }
 .ai-chat-workbench-tools-open .ai-chat-header { flex-wrap: wrap; padding: 17px; }
